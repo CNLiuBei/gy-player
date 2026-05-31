@@ -2,7 +2,7 @@
 // 风格：圆润描边 / 填充混合，参考 Lucide 与 Video.js
 
 export const icons = {
-    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.87l11-6.86a1 1 0 0 0 0-1.74l-11-6.86A1 1 0 0 0 8 5.14Z"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 4.65C4.5 3.4 5.86 2.62 6.94 3.25l13.5 7.35a1.6 1.6 0 0 1 0 2.8l-13.5 7.35C5.86 21.38 4.5 20.6 4.5 19.35V4.65Z"/></svg>',
 
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1.5"/><rect x="14" y="4" width="4" height="16" rx="1.5"/></svg>',
 

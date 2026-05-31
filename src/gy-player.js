@@ -122,7 +122,11 @@ export class GYPlayer extends HTMLElement {
                             <div class="gyp-progress-buffered" id="buffered"></div>
                             <div class="gyp-progress-played" id="played"></div>
                         </div>
-                        <div class="gyp-progress-thumb" id="thumb"></div>
+                        <div class="gyp-progress-thumb" id="thumb">
+                            <div class="gyp-thumb-lens"></div>
+                            <div class="gyp-thumb-overlay"></div>
+                            <div class="gyp-thumb-specular"></div>
+                        </div>
                         <div class="gyp-progress-tip" id="tip">00:00</div>
                     </div>
                     <span class="gyp-time gyp-time-dur"><span id="timeDuration">00:00</span></span>
@@ -161,6 +165,11 @@ export class GYPlayer extends HTMLElement {
                     <feTurbulence type="fractalNoise" baseFrequency="0.008 0.008" numOctaves="2" seed="5" result="turbulence"/>
                     <feGaussianBlur in="turbulence" stdDeviation="2" result="softMap"/>
                     <feDisplacementMap in="SourceGraphic" in2="softMap" scale="60" xChannelSelector="R" yChannelSelector="G"/>
+                </filter>
+                <!-- 进度条 thumb 液态透镜：拖动时放大折射下方轨道 -->
+                <filter id="gyp-thumb-lens" x="-50%" y="-50%" width="200%" height="200%">
+                    <feImage x="0" y="0" result="thumbNormal" xlink:href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><radialGradient id='m' cx='50%25' cy='50%25' r='75%25'><stop offset='0%25' stop-color='rgb(128,128,255)'/><stop offset='90%25' stop-color='rgb(255,255,255)'/></radialGradient><rect width='100%25' height='100%25' fill='url(%23m)'/></svg>"/>
+                    <feDisplacementMap in="SourceGraphic" in2="thumbNormal" scale="-90" xChannelSelector="R" yChannelSelector="G"/>
                 </filter>
             </svg>
 

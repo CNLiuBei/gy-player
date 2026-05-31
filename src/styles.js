@@ -210,26 +210,63 @@ export const styles = `
 .gyp-progress-played {
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    background: var(--gyp-accent);
-    background: linear-gradient(90deg, var(--gyp-accent), color-mix(in srgb, var(--gyp-accent) 70%, #fff));
+    background: #fff;
     border-radius: 5px;
     width: 0;
-    box-shadow: 0 0 8px rgba(255,69,58,0.5);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--gyp-accent) 60%, transparent);
+    box-shadow: 0 0 6px rgba(255,255,255,0.45);
 }
 .gyp-progress-thumb {
     position: absolute;
     top: 50%;
-    width: 15px; height: 15px;
-    background: #fff;
-    border-radius: 50%;
+    left: 0;
+    width: 28px; height: 16px;
+    border-radius: 999px;
     transform: translate(-50%, -50%) scale(0);
-    box-shadow: 0 1px 6px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,0,0,0.06);
-    transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1);
+    transform-origin: center;
+    transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1), height 0.15s ease;
     pointer-events: none;
+    overflow: hidden;
+    /* 平时：白色药丸 */
+    background: #fff;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.35), 0 0 2px rgba(0,0,0,0.2);
 }
 .gyp-progress:hover .gyp-progress-thumb,
 .gyp-progress.dragging .gyp-progress-thumb { transform: translate(-50%, -50%) scale(1); }
+
+/* 液态玻璃透镜三层（默认隐藏，拖动时显现）*/
+.gyp-thumb-lens, .gyp-thumb-overlay, .gyp-thumb-specular {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+}
+.gyp-thumb-lens {
+    z-index: 0;
+    backdrop-filter: blur(0.6px);
+    -webkit-backdrop-filter: blur(0.6px);
+    filter: url(#gyp-thumb-lens);
+}
+.gyp-thumb-overlay {
+    z-index: 1;
+    background: rgba(255,255,255,0.10);
+}
+.gyp-thumb-specular {
+    z-index: 2;
+    box-shadow:
+        inset 1px 1px 0 rgba(255,255,255,0.35),
+        inset 0 0 14px rgba(255,255,255,0.45),
+        inset -1px -1px 0 rgba(255,255,255,0.18);
+}
+/* 拖动时：药丸变透明玻璃透镜，三层显现 */
+.gyp-progress.dragging .gyp-progress-thumb {
+    background: transparent;
+    box-shadow: none;
+}
+.gyp-progress.dragging .gyp-thumb-lens,
+.gyp-progress.dragging .gyp-thumb-overlay,
+.gyp-progress.dragging .gyp-thumb-specular { opacity: 1; }
 
 /* hover 时间气泡（液态玻璃小卡片，浮于 dock 上方）*/
 .gyp-progress-tip {
@@ -269,7 +306,7 @@ export const styles = `
 .gyp-mini-bar {
     height: 100%;
     width: 0;
-    background: var(--gyp-accent);
+    background: #fff;
 }
 
 /* ===== 按钮 ===== */
@@ -355,12 +392,14 @@ export const styles = `
 .gyp-volume-thumb {
     position: absolute;
     top: 50%; left: 100%;
-    width: 12px; height: 12px;
+    width: 16px; height: 12px;
     background: #fff;
-    border-radius: 50%;
+    border-radius: 999px;
     transform: translate(-50%, -50%);
-    box-shadow: 0 1px 4px rgba(0,0,0,0.45);
+    box-shadow: 0 1px 6px rgba(0,0,0,0.4), 0 0 2px rgba(0,0,0,0.2);
+    transition: transform 0.12s ease;
 }
+.gyp-volume-slider:active .gyp-volume-thumb { transform: translate(-50%, -50%) scaleY(0.92) scaleX(1.12); }
 
 /* ===== 中央大按钮（播放/暂停回显，液态玻璃圆）===== */
 .gyp-center {
@@ -701,6 +740,9 @@ export const styles = `
     /* dock 玻璃：关闭折射与模糊，加深染色保证可读 */
     .gyp-glass-effect { filter: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
     .gyp-glass-tint { background: var(--gyp-glass-bg-solid) !important; }
+    /* 进度条 thumb：拖动时也用白色药丸，不走玻璃透镜 */
+    .gyp-progress.dragging .gyp-progress-thumb { background: #fff !important; box-shadow: 0 1px 8px rgba(0,0,0,0.35) !important; }
+    .gyp-thumb-lens { filter: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 }
 
 /* 尊重减少动效偏好 */
