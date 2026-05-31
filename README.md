@@ -2,9 +2,11 @@
 
 极致轻量的自研 Web 播放器，专为 HLS / CMAF 设计，零框架，部署到 Cloudflare Pages。
 
+> 完整对接 API 参考见 **[API.md](./API.md)**。
+
 ## 特性
 
-- **体积极小**：UI 皮肤打包后 **12 KB gzip**，含全部交互逻辑
+- **体积极小**：UI 皮肤打包后 **14 KB gzip**，含全部交互逻辑
 - **引擎按需加载**：Safari / iOS 走原生 HLS（**零额外依赖**），Chrome / Firefox / Android 才动态加载 hls.js
 - **零框架**：原生 Web Component + Shadow DOM，样式隔离，可嵌入任意页面
 - **无 rAF 轮询**：只监听原生 `video` 事件更新 UI，CPU 占用低
@@ -112,9 +114,9 @@ npm run deploy
 ## 体积构成
 
 ```
-UI 皮肤（全部交互）   12 KB gzip   ← 始终加载
+UI 皮肤（全部交互）   14 KB gzip   ← 始终加载
 hls.js（按需）       160 KB gzip  ← 仅 Chrome/FF/Android 在播放 HLS 时加载
-Safari / iOS                      ← 原生播放，仅 12 KB
+Safari / iOS                      ← 原生播放，仅 14 KB
 ```
 
 ## 浏览器支持
