@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#000000">
+    <link rel="icon" href="data:,">
+    <title>GY Player — 极致轻量 Web 播放器</title>
+    <style>
+        :root { color-scheme: dark; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            background: #0a0a0b;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 24px 16px;
+            gap: 20px;
+        }
+        h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+        .subtitle { font-size: 14px; opacity: 0.6; margin-top: -12px; }
+        .player-wrap {
+            width: 100%;
+            max-width: 960px;
+            aspect-ratio: 16 / 9;
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+            background: #000;
+        }
+        .controls {
+            width: 100%;
+            max-width: 960px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .controls input {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            font-size: 14px;
+        }
+        .controls button {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: none;
+            background: #ff4d4f;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+        .controls button:hover { opacity: 0.85; }
+        .samples {
+            width: 100%;
+            max-width: 960px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .samples button {
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .samples button:hover { background: rgba(255,255,255,0.12); }
+        .hint { font-size: 13px; opacity: 0.5; max-width: 960px; line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <h1>GY Player</h1>
+    <p class="subtitle">极致轻量自研 Web 播放器 · HLS/CMAF · 零框架</p>
+
+    <div class="player-wrap">
+        <gy-player id="player" title="演示视频" autoplay></gy-player>
+    </div>
+
+    <div class="controls">
+        <input id="urlInput" type="text" placeholder="粘贴 .m3u8 地址" value="https://stream.mux.com/r4rOE02cc95tbe3I00302nlrHfT023Q3IedFJW029w018KxZA.m3u8">
+        <button id="loadBtn">加载</button>
+    </div>
+
+    <div class="samples">
+        <button data-url="https://stream.mux.com/r4rOE02cc95tbe3I00302nlrHfT023Q3IedFJW029w018KxZA.m3u8">Mux CMAF（H.264 多码率）</button>
+        <button data-url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8">Mux TS（多码率）</button>
+        <button data-url="https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8">Tears of Steel（多音轨+字幕）</button>
+        <button data-url="https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/master.m3u8">Apple HEVC（测 Safari 解码）</button>
+    </div>
+
+    <p class="hint">
+        快捷键：空格/K 播放暂停 · ←→ 快退快进 · ↑↓ 音量 · F 全屏 · M 静音 · P 画中画 · &lt; &gt; 倍速 · 0-9 跳转<br>
+        移动端：单击切换控件 · 双击两侧快进退 · 横滑进度 · 竖滑音量/亮度 · 长按 2 倍速
+    </p>
+
+    <script type="module">
+        import './src/gy-player.js';
+
+        const player = document.getElementById('player');
+        const urlInput = document.getElementById('urlInput');
+
+        function load(url) {
+            if (!url) return;
+            player.loadStream(url, { videoId: url });
+        }
+
+        document.getElementById('loadBtn').addEventListener('click', () => load(urlInput.value.trim()));
+        document.querySelectorAll('.samples button').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                urlInput.value = btn.dataset.url;
+                load(btn.dataset.url);
+            });
+        });
+
+        player.addEventListener('back', () => console.log('返回事件触发'));
+        player.addEventListener('ended', () => console.log('播放结束'));
+
+        // 首次加载默认源
+        load(urlInput.value.trim());
+    </script>
+</body>
+</html>

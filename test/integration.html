@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>integration check</title>
+<style>html,body{margin:0;height:100%;background:#000}#player{width:100vw;height:100vh}</style></head>
+<body>
+    <gy-player id="player" autoplay></gy-player>
+    <script type="module">
+        import '../src/gy-player.js';
+        const player = document.getElementById('player');
+        // 暴露事件捕获供测试读取
+        window.__progressEvents = [];
+        window.__endedEvents = [];
+        player.addEventListener('progress', (e) => window.__progressEvents.push(e.detail));
+        player.addEventListener('ended', (e) => window.__endedEvents.push(e.detail));
+        // 从头播放，独立验证 progress 事件能稳定抛出（不依赖 seek 到未缓冲区）
+        player.loadStream('https://stream.mux.com/r4rOE02cc95tbe3I00302nlrHfT023Q3IedFJW029w018KxZA.m3u8', {
+            videoId: 'integration-test',
+            disableStorage: true,
+        });
+        // 暴露一个用 startTime 的二次加载，供单独验证起播位置
+        window.__loadWithStartTime = () => player.loadStream(
+            'https://stream.mux.com/r4rOE02cc95tbe3I00302nlrHfT023Q3IedFJW029w018KxZA.m3u8',
+            { videoId: 'integration-test-2', startTime: 30, disableStorage: true });
+        window.__player = player;
+    </script>
+</body>
+</html>
