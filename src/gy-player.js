@@ -27,6 +27,7 @@ const RESUME_THRESHOLD = 15;   // 超过此秒数才提示续播
 const SAVE_INTERVAL = 5;       // 进度保存间隔（秒）
 const HIDE_DELAY = 3000;       // 控件自动隐藏延迟（毫秒）
 const SEEK_STEP = 10;          // 快进/快退步长（秒）
+const EP_SEG_SIZE = 60;        // 选集分段容量（超过则分段，对标 B站长剧）
 
 export class GYPlayer extends HTMLElement {
     static get observedAttributes() {
@@ -110,6 +111,8 @@ export class GYPlayer extends HTMLElement {
 
             <div class="gyp-mini" id="mini"><div class="gyp-mini-bar" id="miniBar"></div></div>
 
+            <div class="gyp-scrim" id="scrim"></div>
+
             <div class="gyp-bottom" id="bottom">
                 <div class="gyp-progress-bar">
                     <span class="gyp-time gyp-time-cur"><span id="timeCurrent">00:00</span></span>
@@ -125,6 +128,12 @@ export class GYPlayer extends HTMLElement {
                     <span class="gyp-time gyp-time-dur"><span id="timeDuration">00:00</span></span>
                 </div>
                 <div class="gyp-btns">
+                    <!-- 液态玻璃层（effect 折射 / tint 染色 / shine 边缘高光），内容在其上 -->
+                    <div class="gyp-glass" aria-hidden="true">
+                        <div class="gyp-glass-effect"></div>
+                        <div class="gyp-glass-tint"></div>
+                        <div class="gyp-glass-shine"></div>
+                    </div>
                     <button class="gyp-btn" id="playBtn" aria-label="播放/暂停">${icons.play}</button>
                     <button class="gyp-btn hidden" id="prevBtn" aria-label="上一集">${icons.prev}</button>
                     <button class="gyp-btn hidden" id="nextBtn" aria-label="下一集">${icons.next}</button>
@@ -137,12 +146,33 @@ export class GYPlayer extends HTMLElement {
                         </div>
                     </div>
                     <div class="gyp-spacer"></div>
+                    <button class="gyp-btn gyp-btn-text hidden" id="episodesBtn" aria-label="选集">选集</button>
                     <button class="gyp-btn gyp-btn-text" id="speedBtn" aria-label="倍速">1x</button>
                     <button class="gyp-btn gyp-btn-text" id="qualityBtn" aria-label="画质">自动</button>
                     <button class="gyp-btn hidden" id="subtitleBtn" aria-label="字幕">${icons.subtitle}</button>
                     <button class="gyp-btn ${supportsPiP ? '' : 'hidden'}" id="pipBtn" aria-label="画中画">${icons.pip}</button>
                     <button class="gyp-btn ${supportsFullscreen ? '' : 'hidden'}" id="fsBtn" aria-label="全屏">${icons.fullscreen}</button>
                 </div>
+            </div>
+
+            <!-- 液态玻璃 SVG 置换滤镜（注入 Shadow DOM，供 dock 折射引用）-->
+            <svg class="gyp-glass-svg" aria-hidden="true" width="0" height="0">
+                <filter id="gyp-glass-distortion" x="0%" y="0%" width="100%" height="100%" filterUnits="objectBoundingBox">
+                    <feTurbulence type="fractalNoise" baseFrequency="0.008 0.008" numOctaves="2" seed="5" result="turbulence"/>
+                    <feGaussianBlur in="turbulence" stdDeviation="2" result="softMap"/>
+                    <feDisplacementMap in="SourceGraphic" in2="softMap" scale="60" xChannelSelector="R" yChannelSelector="G"/>
+                </filter>
+            </svg>
+
+            <!-- 选集侧滑面板 -->
+            <div class="gyp-ep-panel hidden" id="epPanel">
+                <div class="gyp-ep-header">
+                    <span class="gyp-ep-title">选集</span>
+                    <button class="gyp-btn" id="epClose" aria-label="关闭">${icons.back}</button>
+                </div>
+                <div class="gyp-ep-seasons" id="epSeasons"></div>
+                <div class="gyp-ep-segments hidden" id="epSegments"></div>
+                <div class="gyp-ep-list" id="epList"></div>
             </div>
         `;
     }
@@ -161,6 +191,9 @@ export class GYPlayer extends HTMLElement {
             volumeFill: $('volumeFill'), volumeThumb: $('volumeThumb'),
             speedBtn: $('speedBtn'), qualityBtn: $('qualityBtn'),
             subtitleBtn: $('subtitleBtn'), pipBtn: $('pipBtn'), fsBtn: $('fsBtn'),
+            episodesBtn: $('episodesBtn'), epPanel: $('epPanel'),
+            epClose: $('epClose'), epSeasons: $('epSeasons'),
+            epSegments: $('epSegments'), epList: $('epList'),
             progress: $('progress'), played: $('played'), buffered: $('buffered'),
             thumb: $('thumb'), tip: $('tip'),
             timeCurrent: $('timeCurrent'), timeDuration: $('timeDuration'),
@@ -446,6 +479,105 @@ export class GYPlayer extends HTMLElement {
     showNextButton(visible) { this.els.nextBtn.classList.toggle('hidden', !visible); }
     showPrevButton(visible) { this.els.prevBtn.classList.toggle('hidden', !visible); }
 
+    /**
+     * 设置剧集列表（启用播放器内选集面板）
+     * @param {Array} episodes [{id, title, season, episode}]
+     * @param {string} currentId 当前播放集 id
+     */
+    setEpisodes(episodes, currentId) {
+        this._episodes = Array.isArray(episodes) ? episodes : [];
+        this._currentEpId = currentId || null;
+        const has = this._episodes.length > 0;
+        this.els.episodesBtn.classList.toggle('hidden', !has);
+        if (has) this._renderEpisodePanel();
+    }
+
+    /** 更新当前集高亮（切集后调用） */
+    setCurrentEpisode(currentId) {
+        this._currentEpId = currentId;
+        if (this._episodes?.length) this._renderEpisodePanel();
+    }
+
+    /** 渲染选集面板（季分组 + 分段 + 当前段集列表，扛千集）*/
+    _renderEpisodePanel() {
+        const eps = this._episodes;
+        // 按季分组
+        const seasons = {};
+        eps.forEach((v) => { const s = v.season || 1; (seasons[s] ||= []).push(v); });
+        const keys = Object.keys(seasons).sort((a, b) => a - b);
+        const multi = keys.length > 1;
+        // 当前集所在季
+        const curEp = eps.find((v) => v.id === this._currentEpId);
+        const activeSeason = this._activeSeason || (curEp ? String(curEp.season || 1) : keys[0]);
+        this._activeSeason = activeSeason;
+
+        // 季标签
+        this.els.epSeasons.classList.toggle('hidden', !multi);
+        if (multi) {
+            this.els.epSeasons.innerHTML = keys.map((s) =>
+                `<button class="gyp-ep-season ${s === activeSeason ? 'active' : ''}" data-season="${s}">第${s}季</button>`).join('');
+        }
+
+        // 当前季全部集（排序）
+        const all = (seasons[activeSeason] || []).slice().sort((a, b) => (a.episode || 0) - (b.episode || 0));
+        this._epSeasonList = all;
+
+        // 分段：超过阈值才分段
+        const segCount = Math.ceil(all.length / EP_SEG_SIZE);
+        const needSeg = segCount > 1;
+        // 当前段：默认定位到正在播放的那一集所在段
+        if (this._activeSegSeason !== activeSeason) {
+            const curIdx = all.findIndex((v) => v.id === this._currentEpId);
+            this._activeSeg = curIdx >= 0 ? Math.floor(curIdx / EP_SEG_SIZE) : 0;
+            this._activeSegSeason = activeSeason;
+        }
+        if (this._activeSeg >= segCount) this._activeSeg = 0;
+
+        // 分段 chip
+        this.els.epSegments.classList.toggle('hidden', !needSeg);
+        if (needSeg) {
+            let segHtml = '';
+            for (let i = 0; i < segCount; i++) {
+                const from = i * EP_SEG_SIZE;
+                const to = Math.min(from + EP_SEG_SIZE, all.length);
+                const a = all[from]?.episode ?? (from + 1);
+                const b = all[to - 1]?.episode ?? to;
+                segHtml += `<button class="gyp-ep-seg ${i === this._activeSeg ? 'active' : ''}" data-seg="${i}">${a}-${b}</button>`;
+            }
+            this.els.epSegments.innerHTML = segHtml;
+        }
+
+        // 只渲染当前段的集（DOM 控制在 EP_SEG_SIZE 内）
+        this._renderEpisodeItems();
+    }
+
+    /** 渲染当前段的集号项 */
+    _renderEpisodeItems() {
+        const all = this._epSeasonList || [];
+        const from = (this._activeSeg || 0) * EP_SEG_SIZE;
+        const list = all.slice(from, from + EP_SEG_SIZE);
+        this.els.epList.innerHTML = list.map((v) => {
+            const active = v.id === this._currentEpId ? 'active' : '';
+            const label = (v.title || `第${v.episode}集`).replace(/</g, '&lt;');
+            return `<button class="gyp-ep-item ${active}" data-id="${String(v.id).replace(/"/g, '&quot;')}" title="${label.replace(/"/g, '&quot;')}">
+                <span class="gyp-ep-num">${v.episode || ''}</span>
+                <span class="gyp-ep-name">${label}</span>
+            </button>`;
+        }).join('');
+    }
+
+    /** 打开/关闭选集面板 */
+    toggleEpisodePanel(open) {
+        const show = open ?? this.els.epPanel.classList.contains('hidden');
+        if (show) this.closeMenu?.(); // 与设置菜单互斥
+        this.els.epPanel.classList.toggle('hidden', !show);
+        if (show) {
+            // 滚动到当前集
+            const active = this.els.epList.querySelector('.gyp-ep-item.active');
+            active?.scrollIntoView({ block: 'center' });
+        }
+    }
+
     toggleFullscreen() {
         const doc = document;
         if (doc.fullscreenElement || doc.webkitFullscreenElement) {
@@ -548,6 +680,7 @@ export class GYPlayer extends HTMLElement {
     // ===== 菜单（倍速/画质/字幕/音轨）=====
     toggleMenu(type) {
         if (this._menuOpen === type) { this.closeMenu(); return; }
+        this.toggleEpisodePanel(false); // 与选集面板互斥
         this._menuOpen = type;
         this.els.menu.classList.remove('hidden');
         this.els.menu.innerHTML = this._buildMenu(type);

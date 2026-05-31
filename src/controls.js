@@ -33,6 +33,34 @@ export function bindControls(player, signal) {
     els.qualityBtn.addEventListener('click', () => player.toggleMenu('quality'), sig);
     els.subtitleBtn.addEventListener('click', () => player.toggleMenu('subtitle'), sig);
 
+    // 选集面板
+    els.episodesBtn.addEventListener('click', () => player.toggleEpisodePanel(), sig);
+    els.epClose.addEventListener('click', () => player.toggleEpisodePanel(false), sig);
+    // 季切换（事件委托）
+    els.epSeasons.addEventListener('click', (e) => {
+        const tab = e.target.closest('.gyp-ep-season');
+        if (!tab) return;
+        player._activeSeason = tab.dataset.season;
+        player._renderEpisodePanel();
+    }, sig);
+    // 分段切换（事件委托）
+    els.epSegments.addEventListener('click', (e) => {
+        const seg = e.target.closest('.gyp-ep-seg');
+        if (!seg) return;
+        player._activeSeg = parseInt(seg.dataset.seg, 10);
+        // 更新 chip 高亮 + 重渲当前段
+        els.epSegments.querySelectorAll('.gyp-ep-seg').forEach((c) => c.classList.toggle('active', c === seg));
+        player._renderEpisodeItems();
+        player.els.epList.scrollTop = 0;
+    }, sig);
+    // 选某集 → 抛事件给外部切流，并关闭面板
+    els.epList.addEventListener('click', (e) => {
+        const item = e.target.closest('.gyp-ep-item');
+        if (!item) return;
+        player.dispatchEvent(new CustomEvent('selectepisode', { detail: { id: item.dataset.id } }));
+        player.toggleEpisodePanel(false);
+    }, sig);
+
     // 点击行为：
     //   桌面端 — 单击播放/暂停，双击全屏。用延时区分单/双击，避免双击时
     //            误触两次 togglePlay 导致画面闪烁。
