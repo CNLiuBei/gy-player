@@ -85,9 +85,10 @@ export class PlaybackEngine {
      * @param {HTMLVideoElement} video 目标 video 元素
      * @param {Object} callbacks 事件回调
      */
-    constructor(video, callbacks = {}) {
+    constructor(video, callbacks = {}, options = {}) {
         this.video = video;
         this.callbacks = callbacks;
+        this.options = options;
         this.hls = null;          // hls.js 实例（原生模式下为 null）
         this.native = false;      // 是否走原生 HLS
         this._destroyed = false;
@@ -158,6 +159,12 @@ export class PlaybackEngine {
             manifestLoadingMaxRetry: 4,
             levelLoadingMaxRetry: 4,
             lowLatencyMode: false,
+            // HDR 在浏览器/MSE 下兼容性不稳定；有 SDR 轨道时默认优先 SDR，避免偏色。
+            // 如果业务确认终端支持 HDR，可在 loadStream(url, { preferHDR: true }) 中开启优先 HDR。
+            videoPreference: {
+                preferHDR: this.options.preferHDR === true,
+                allowedVideoRanges: this.options.allowedVideoRanges || ['SDR', 'PQ', 'HLG'],
+            },
         });
         this._Hls = Hls;
 

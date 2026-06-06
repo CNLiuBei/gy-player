@@ -3,6 +3,7 @@
 
 import { clamp } from './utils.js';
 import { saveVolume } from './storage.js';
+import { icons } from './icons.js';
 
 const SWIPE_THRESHOLD = 16;       // 判定为有效滑动的最小位移（px）
 const SEEK_SECONDS_PER_WIDTH = 90; // 全屏横滑对应的秒数
@@ -44,7 +45,7 @@ export function bindGestures(player, signal) {
             longPressActive = true;
             originalRate = v.playbackRate;
             v.playbackRate = LONG_PRESS_RATE;
-            player.showHint(`${LONG_PRESS_RATE}x 快进中`);
+            player.showHintHold(`▶▶ ${LONG_PRESS_RATE}x 快进中`);
         }, LONG_PRESS_DELAY);
     };
 
@@ -77,12 +78,21 @@ export function bindGestures(player, signal) {
             v.volume = clamp(startVol + delta, 0, 1);
             v.muted = false;
             saveVolume(v.volume);
-            player.showHint(`音量 ${Math.round(v.volume * 100)}%`);
+            const icon = v.volume === 0 ? icons.volumeMute
+                : v.volume < 0.5 ? icons.volumeLow : icons.volumeHigh;
+            player.showVSlide('volume', v.volume, icon);
         } else if (gesture === 'brightness') {
-            // 亮度：通过 video 滤镜模拟（Web 无法控制系统亮度）
+            // 亮度：用覆盖层模拟，不给 video 加 CSS filter，避免破坏 HDR/广色域合成。
             player._brightness = clamp((player._brightness ?? 1) + (-dy / (player.clientHeight * 0.6)), 0.2, 1.5);
-            v.style.filter = `brightness(${player._brightness})`;
-            player.showHint(`亮度 ${Math.round(player._brightness * 100)}%`);
+            if (player.els.brightnessOverlay) {
+                const dim = player._brightness < 1;
+                player.els.brightnessOverlay.style.background = dim ? '#000' : '#fff';
+                player.els.brightnessOverlay.style.opacity = dim
+                    ? String(((1 - player._brightness) / 0.8) * 0.75)
+                    : String(((player._brightness - 1) / 0.5) * 0.18);
+            }
+            // 显示比例：0.2~1.5 映射到 0~1
+            player.showVSlide('brightness', (player._brightness - 0.2) / 1.3, icons.brightness);
         }
     };
 
@@ -91,6 +101,7 @@ export function bindGestures(player, signal) {
         if (longPressActive) {
             v.playbackRate = originalRate;
             longPressActive = false;
+            player.hideHint();
             return;
         }
         // 双击检测（仅在未发生滑动时）
@@ -99,7 +110,9 @@ export function bindGestures(player, signal) {
             const x = e.changedTouches[0].clientX;
             if (now - lastTap < DOUBLE_TAP_GAP && Math.abs(x - lastTapX) < 60) {
                 const isRight = x > player.clientWidth / 2;
-                player.seekBy(isRight ? DOUBLE_TAP_SEEK : -DOUBLE_TAP_SEEK);
+                // 用涟漪反馈 + 直接 seek（不复用 showHint，避免与涟漪文案重叠）
+                player.seek(player.video.currentTime + (isRight ? DOUBLE_TAP_SEEK : -DOUBLE_TAP_SEEK));
+                player.flashDoubleTap(isRight ? 'right' : 'left', DOUBLE_TAP_SEEK);
                 lastTap = 0; // 重置，避免三击误判
             } else {
                 lastTap = now;
@@ -112,4 +125,14 @@ export function bindGestures(player, signal) {
     surface.addEventListener('touchstart', onStart, { signal, passive: true });
     surface.addEventListener('touchmove', onMove, { signal, passive: true });
     surface.addEventListener('touchend', onEnd, sig);
+    // 触摸被系统中断（来电、通知、多指）时复位长按倍速，避免速率卡住
+    surface.addEventListener('touchcancel', (e) => {
+        clearTimeout(longPressTimer);
+        if (longPressActive) {
+            v.playbackRate = originalRate;
+            longPressActive = false;
+            player.hideHint();
+        }
+        gesture = null;
+    }, sig);
 }

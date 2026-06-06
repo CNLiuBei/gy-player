@@ -1,7 +1,7 @@
 {
   "name": "gy-player",
   "version": "1.0.0",
-  "description": "极致轻量的自研 Web 播放器（HLS/CMAF），零框架 Web Component，部署到 Cloudflare Pages",
+  "description": "极致轻量的自研 Web 播放器（HLS/CMAF），零框架 Web Component，部署到 Cloudflare Workers Static Assets",
   "type": "module",
   "main": "dist/gy-player.js",
   "module": "dist/gy-player.js",
@@ -9,11 +9,11 @@
     ".": "./dist/gy-player.js"
   },
   "scripts": {
-    "dev": "wrangler pages dev .",
+    "dev": "wrangler dev",
     "build": "node build.js",
     "test": "node test/logic.test.mjs && node test/resume.test.mjs && node test/fallback.test.mjs && node test/progress.test.mjs",
-    "test:browser": "node test/browser-check.mjs && node test/feature-check.mjs && node test/integration-check.mjs",
-    "deploy": "wrangler pages deploy . --project-name gy-player"
+    "test:browser": "node test/browser-check.mjs && node test/feature-check.mjs && node test/integration-check.mjs && node test/mobile-check.mjs",
+    "deploy": "wrangler deploy"
   },
   "keywords": [
     "video",

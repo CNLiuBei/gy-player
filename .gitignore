@@ -1,5 +1,10 @@
 # 依赖
 node_modules/
+package-lock.json
+
+# 构建产物
+dist/
+player/
 
 # 系统文件
 .DS_Store

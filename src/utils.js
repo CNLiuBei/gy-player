@@ -90,8 +90,13 @@ export const supportsPiP = 'pictureInPictureEnabled' in document &&
     document.pictureInPictureEnabled;
 
 /** 是否支持全屏 API */
+/* iPhone Safari 不支持 document/element 级全屏（fullscreenEnabled 为 false），
+   但 <video> 支持原生全屏（webkitEnterFullscreen），故 iOS 一律视为支持，
+   由 toggleFullscreen 回退到 video 原生全屏。*/
 export const supportsFullscreen = !!(document.fullscreenEnabled ||
-    document.webkitFullscreenEnabled);
+    document.webkitFullscreenEnabled ||
+    isIOS ||
+    typeof document.createElement('video').webkitEnterFullscreen === 'function');
 
 /** 是否支持 AirPlay（Safari） */
 export function supportsAirPlay() {

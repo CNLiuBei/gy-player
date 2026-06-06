@@ -36,12 +36,40 @@ export function bindControls(player, signal) {
     // 选集面板
     els.episodesBtn.addEventListener('click', () => player.toggleEpisodePanel(), sig);
     els.epClose.addEventListener('click', () => player.toggleEpisodePanel(false), sig);
-    // 季切换（事件委托）
+    // 抽屉遮罩点击：关闭菜单与选集面板
+    els.sheetMask.addEventListener('click', () => {
+        player.closeMenu();
+        player.toggleEpisodePanel(false);
+    }, sig);
+    // 季下拉开关
+    els.epSeasonCurrent.addEventListener('click', (e) => {
+        e.stopPropagation();
+        els.epSeasons.classList.toggle('hidden');
+    }, sig);
+    // 季选项点击（事件委托）
     els.epSeasons.addEventListener('click', (e) => {
-        const tab = e.target.closest('.gyp-ep-season');
-        if (!tab) return;
-        player._activeSeason = tab.dataset.season;
+        const opt = e.target.closest('.gyp-ep-option');
+        if (!opt) return;
+        player._activeSeason = opt.dataset.season;
+        els.epSeasons.classList.add('hidden');
         player._renderEpisodePanel();
+    }, sig);
+    // 上/下一季箭头
+    const stepSeason = (dir) => {
+        const keys = player._seasonKeys || [];
+        const idx = keys.indexOf(player._activeSeason);
+        const next = keys[idx + dir];
+        if (!next) return;
+        player._activeSeason = next;
+        player._renderEpisodePanel();
+    };
+    els.epPrevSeason.addEventListener('click', () => stepSeason(-1), sig);
+    els.epNextSeason.addEventListener('click', () => stepSeason(1), sig);
+    // 点面板内其他位置关闭季下拉
+    els.epPanel.addEventListener('click', (e) => {
+        if (!els.epSeasons.contains(e.target) && !els.epSeasonCurrent.contains(e.target)) {
+            els.epSeasons.classList.add('hidden');
+        }
     }, sig);
     // 分段切换（事件委托）
     els.epSegments.addEventListener('click', (e) => {
@@ -90,6 +118,8 @@ export function bindControls(player, signal) {
         const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
         player.classList.toggle('gyp-fullscreen', isFs);
         els.fsBtn.innerHTML = isFs ? icons.exitFullscreen : icons.fullscreen;
+        // 退出全屏时解除横屏锁定
+        if (!isFs) player._unlockOrientation?.();
     };
     document.addEventListener('fullscreenchange', onFsChange, sig);
     document.addEventListener('webkitfullscreenchange', onFsChange, sig);

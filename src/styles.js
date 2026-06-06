@@ -39,6 +39,7 @@ export const styles = `
     z-index: 2147483647;
     width: 100vw;
     height: 100vh;
+    height: 100dvh;   /* 动态视口：避开移动浏览器地址栏伸缩导致的高度跳变 */
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -51,6 +52,16 @@ export const styles = `
     object-fit: var(--gyp-fit, contain);
 }
 
+.gyp-brightness-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    background: #000;
+    transition: opacity 0.12s ease;
+}
+
 .hidden { display: none !important; }
 
 /* ===== 点击捕获层 ===== */
@@ -58,6 +69,8 @@ export const styles = `
     position: absolute;
     inset: 0;
     z-index: 1;
+    /* 触屏手势（横滑进度/竖滑音量亮度）期间阻止页面跟随滚动与浏览器手势 */
+    touch-action: none;
 }
 
 /* ===== 顶部栏 ===== */
@@ -69,6 +82,8 @@ export const styles = `
     gap: 12px;
     padding: 14px 18px;
     padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    padding-left: calc(18px + env(safe-area-inset-left, 0px));
+    padding-right: calc(18px + env(safe-area-inset-right, 0px));
     background: linear-gradient(to bottom, rgba(0,0,0,0.45), transparent);
     z-index: 10;
     transition: opacity 0.3s cubic-bezier(0.32, 0.72, 0, 1), transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
@@ -90,6 +105,8 @@ export const styles = `
     position: absolute;
     left: 12px; right: 12px;
     bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -456,6 +473,143 @@ export const styles = `
 }
 .gyp-hint.visible { opacity: 1; }
 
+/* ===== 双击快进/快退涟漪反馈（移动端两侧）===== */
+.gyp-dbltap {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 38%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    z-index: 14;
+    pointer-events: none;
+    color: #fff;
+    /* 半椭圆水波纹底色，向中心收拢 */
+    background: radial-gradient(circle at center, rgba(255,255,255,0.18), rgba(255,255,255,0.06) 45%, transparent 70%);
+    opacity: 0;
+}
+.gyp-dbltap.hidden { display: none; }
+.gyp-dbltap-left { left: 0; border-radius: 0 50% 50% 0 / 0 50% 50% 0; }
+.gyp-dbltap-right { right: 0; border-radius: 50% 0 0 50% / 50% 0 0 50%; }
+.gyp-dbltap-icon { display: grid; place-items: center; }
+.gyp-dbltap-icon svg { width: 38px; height: 38px; filter: drop-shadow(0 1px 4px rgba(0,0,0,0.5)); }
+/* 两个箭头连续闪动，模拟方向流动 */
+.gyp-dbltap-icon svg:nth-child(2) { margin-left: -10px; }
+.gyp-dbltap-text {
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+}
+.gyp-dbltap.active {
+    animation: gyp-dbltap-pulse 0.6s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes gyp-dbltap-pulse {
+    0% { opacity: 0; }
+    25% { opacity: 1; }
+    100% { opacity: 0; }
+}
+/* 箭头微动 */
+.gyp-dbltap.active .gyp-dbltap-icon {
+    animation: gyp-dbltap-nudge 0.5s ease;
+}
+@keyframes gyp-dbltap-nudge {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(var(--gyp-nudge, 4px)); }
+}
+.gyp-dbltap-left .gyp-dbltap-icon { --gyp-nudge: -4px; }
+.gyp-dbltap-right .gyp-dbltap-icon { --gyp-nudge: 4px; }
+
+/* ===== 竖滑亮度/音量可视化指示（中央液态玻璃胶囊）===== */
+.gyp-vslide {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    border-radius: 16px;
+    background: var(--gyp-glass-bg);
+    backdrop-filter: var(--gyp-glass-blur);
+    -webkit-backdrop-filter: var(--gyp-glass-blur);
+    border: 0.5px solid var(--gyp-glass-border);
+    box-shadow: var(--gyp-glass-rim), 0 6px 24px rgba(0,0,0,0.4);
+    z-index: 20;
+    pointer-events: none;
+}
+.gyp-vslide.hidden { display: none; }
+.gyp-vslide-icon { flex: 0 0 auto; display: grid; place-items: center; }
+.gyp-vslide-icon svg { width: 22px; height: 22px; display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)); }
+.gyp-vslide-track {
+    flex: 0 0 auto;
+    width: 120px; height: 5px;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.28);
+    overflow: hidden;
+}
+.gyp-vslide-fill {
+    height: 100%;
+    width: 0;
+    background: #fff;
+    border-radius: 5px;
+    box-shadow: 0 0 6px rgba(255,255,255,0.45);
+}
+
+/* ===== 移动端首次手势引导 ===== */
+.gyp-guide {
+    position: absolute;
+    inset: 0;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: gyp-mask-in 0.25s ease;
+}
+.gyp-guide.hidden { display: none; }
+.gyp-guide-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 22px 24px;
+    margin: 0 24px;
+    max-width: 360px;
+    border-radius: 20px;
+    background: var(--gyp-glass-bg-solid);
+    border: 0.5px solid var(--gyp-glass-border);
+    box-shadow: var(--gyp-glass-rim), 0 12px 40px rgba(0,0,0,0.5);
+}
+.gyp-guide-title {
+    font-size: 15px; font-weight: 700;
+    letter-spacing: 0.02em; opacity: 0.95;
+    text-align: center;
+}
+.gyp-guide-row {
+    display: flex; align-items: center; gap: 14px;
+    font-size: 14px; font-weight: 500; opacity: 0.92;
+}
+.gyp-guide-ico {
+    flex: 0 0 auto;
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    color: var(--gyp-accent);
+}
+.gyp-guide-ico svg { width: 24px; height: 24px; display: block; }
+.gyp-guide-btn {
+    margin-top: 4px;
+    padding: 11px 0;
+    border: none; border-radius: 14px;
+    background: var(--gyp-accent); color: #fff;
+    font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: transform 0.12s ease, opacity 0.15s ease;
+}
+.gyp-guide-btn:active { transform: scale(0.96); }
+
 /* ===== 缓冲转圈 ===== */
 .gyp-buffering {
     position: absolute;
@@ -470,13 +624,26 @@ export const styles = `
     position: absolute;
     inset: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 24px;
     background: rgba(0,0,0,0.35);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     z-index: 16;
     pointer-events: none;
+}
+.gyp-loading-logo {
+    max-height: 6rem; max-width: 60%;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 12px rgba(0,0,0,0.5));
+    animation: gyp-logo-pulse 2s ease-in-out infinite;
+}
+.gyp-loading-logo.hidden { display: none; }
+@keyframes gyp-logo-pulse {
+    0%, 100% { opacity: 0.85; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.03); }
 }
 .gyp-spinner {
     width: 48px; height: 48px;
@@ -491,6 +658,7 @@ export const styles = `
 .gyp-lock {
     position: absolute;
     right: 18px;
+    right: calc(18px + env(safe-area-inset-right, 0px));
     top: 50%;
     transform: translateY(-50%);
     z-index: 25;
@@ -509,6 +677,7 @@ export const styles = `
 .gyp-ep-panel {
     position: absolute;
     right: 16px;
+    right: calc(16px + env(safe-area-inset-right, 0px));
     bottom: 78px;
     width: 300px; max-width: calc(100% - 32px);
     max-height: 56%;
@@ -536,19 +705,52 @@ export const styles = `
 .gyp-ep-header .gyp-btn { width: 28px; height: 28px; transform: rotate(180deg); }
 .gyp-ep-header .gyp-btn svg { width: 16px; height: 16px; }
 
-.gyp-ep-seasons {
-    display: flex; gap: 6px; flex-wrap: wrap;
+/* 季导航：‹ 第N季 ⌄ ›（对齐 web 详情页）*/
+.gyp-ep-nav {
+    display: flex; align-items: center; gap: 6px;
     padding: 4px 8px 8px;
 }
-.gyp-ep-seasons.hidden { display: none; }
-.gyp-ep-season {
-    padding: 5px 14px; border-radius: 2rem; border: none;
-    background: rgba(255,255,255,0.12); color: #fff;
-    font-size: 12px; font-weight: 600; cursor: pointer;
+.gyp-ep-nav.hidden { display: none; }
+.gyp-ep-arrow {
+    flex: 0 0 auto; width: 30px; height: 30px;
+    display: grid; place-items: center;
+    border: none; border-radius: 50%;
+    background: rgba(255,255,255,0.12); color: #fff; cursor: pointer;
     transition: background 0.14s ease;
 }
-.gyp-ep-season:hover { background: rgba(255,255,255,0.2); }
-.gyp-ep-season.active { background: var(--gyp-accent); }
+.gyp-ep-arrow:hover:not(:disabled) { background: rgba(255,255,255,0.2); }
+.gyp-ep-arrow:disabled { opacity: 0.3; cursor: default; }
+.gyp-ep-arrow svg { width: 16px; height: 16px; display: block; }
+.gyp-ep-current {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 6px 12px; border: none; border-radius: 9px;
+    background: rgba(255,255,255,0.12); color: #fff;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background 0.14s ease;
+}
+.gyp-ep-current:hover { background: rgba(255,255,255,0.2); }
+.gyp-ep-caret { display: inline-flex; opacity: 0.7; }
+.gyp-ep-caret svg { width: 14px; height: 14px; display: block; }
+
+/* 季下拉菜单（绝对定位浮层）*/
+.gyp-ep-dropdown {
+    position: absolute; left: 8px; right: 8px; top: 76px; z-index: 5;
+    background: var(--gyp-glass-bg-solid);
+    border: 0.5px solid var(--gyp-glass-border); border-radius: 12px;
+    box-shadow: var(--gyp-glass-rim), 0 12px 32px rgba(0,0,0,0.5);
+    padding: 5px; max-height: 220px; overflow-y: auto;
+    scrollbar-width: none; -ms-overflow-style: none;
+}
+.gyp-ep-dropdown::-webkit-scrollbar { display: none; }
+.gyp-ep-dropdown.hidden { display: none; }
+.gyp-ep-option {
+    display: block; width: 100%; text-align: left;
+    padding: 8px 11px; border: none; border-radius: 8px;
+    background: transparent; color: #fff; font-size: 13px; cursor: pointer;
+    transition: background 0.14s ease;
+}
+.gyp-ep-option:hover { background: rgba(255,255,255,0.16); }
+.gyp-ep-option.active { background: var(--gyp-accent); }
 
 /* 分段 chip（集多时按段切换）*/
 .gyp-ep-segments {
@@ -579,26 +781,35 @@ export const styles = `
 }
 .gyp-ep-list::-webkit-scrollbar { display: none; }
 .gyp-ep-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 9px 10px; border-radius: 12px;
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 10px 11px; border-radius: 10px;
     border: none; background: transparent;
     color: #fff; text-align: left; cursor: pointer; width: 100%;
     transition: background 0.14s ease;
 }
 .gyp-ep-item:hover { background: rgba(255,255,255,0.16); }
-.gyp-ep-item.active { background: rgba(255,255,255,0.1); font-weight: 600; }
+.gyp-ep-item.active { background: rgba(255,255,255,0.1); }
+.gyp-ep-line { display: flex; align-items: center; gap: 8px; }
 .gyp-ep-num {
-    flex: 0 0 auto; width: 24px; height: 24px;
-    display: grid; place-items: center; border-radius: 7px;
-    background: rgba(255,255,255,0.12); font-size: 12px; font-weight: 600;
+    flex: 0 0 auto; font-size: 13px; font-weight: 600;
+    opacity: 0.55; font-variant-numeric: tabular-nums;
 }
-.gyp-ep-item.active .gyp-ep-num { background: var(--gyp-accent); }
+.gyp-ep-item.has-source .gyp-ep-num { opacity: 1; }
+.gyp-ep-item.active .gyp-ep-num { opacity: 1; color: var(--gyp-accent); }
 .gyp-ep-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gyp-ep-item.active .gyp-ep-name { font-weight: 600; }
+/* 有源标记：绿点 */
+.gyp-ep-dot {
+    flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+    background: #34c759; box-shadow: 0 0 6px rgba(52,199,89,0.5);
+}
+.gyp-ep-date { font-size: 11px; opacity: 0.45; padding-left: 2px; }
 
 /* ===== 设置菜单（液态玻璃面板）===== */
 .gyp-menu {
     position: absolute;
     right: 16px;
+    right: calc(16px + env(safe-area-inset-right, 0px));
     bottom: 78px;
     min-width: 190px;
     max-height: 56%;
@@ -616,6 +827,18 @@ export const styles = `
 }
 .gyp-menu::-webkit-scrollbar { display: none; }
 @keyframes gyp-pop { from { opacity: 0; transform: translateY(8px) scale(0.96); } }
+
+/* 抽屉遮罩：桌面端不显示（面板为角落小浮层），仅移动端底部抽屉时显示并可点击关闭 */
+.gyp-sheet-mask {
+    position: absolute;
+    inset: 0;
+    z-index: 29;
+    background: rgba(0,0,0,0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+}
+.gyp-sheet-mask.hidden { display: none; }
 .gyp-menu-title {
     padding: 8px 12px 4px;
     font-size: 11px;
@@ -718,21 +941,117 @@ export const styles = `
     .gyp-volume-slider { display: none; }
     .gyp-btn { width: 42px; height: 42px; }
     .gyp-time { font-size: 12px; }
-    .gyp-top { padding: 12px 14px; padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
-    .gyp-bottom { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+    .gyp-top {
+        padding: 12px 14px;
+        padding-top: calc(12px + env(safe-area-inset-top, 0px));
+        padding-left: calc(14px + env(safe-area-inset-left, 0px));
+        padding-right: calc(14px + env(safe-area-inset-right, 0px));
+    }
+    /* 保留安全区，避免横屏刘海遮挡 */
+    .gyp-bottom {
+        left: calc(8px + env(safe-area-inset-left, 0px));
+        right: calc(8px + env(safe-area-inset-right, 0px));
+        bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+        gap: 8px;
+    }
     .gyp-btns { padding: 5px 8px; border-radius: 22px; }
     .gyp-progress-bar { gap: 8px; padding: 0 4px; }
+
+    /* 设置菜单 → 底部全宽抽屉（bottom sheet），更易拇指点按 */
+    .gyp-menu {
+        left: 0; right: 0; bottom: 0;
+        min-width: 0;
+        width: 100%;
+        max-height: 60%;
+        padding: 8px 12px calc(16px + env(safe-area-inset-bottom, 0px));
+        padding-left: calc(12px + env(safe-area-inset-left, 0px));
+        padding-right: calc(12px + env(safe-area-inset-right, 0px));
+        border-radius: 20px 20px 0 0;
+        animation: gyp-sheet-up 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    /* 抽屉顶部抓手 */
+    .gyp-menu::before {
+        content: '';
+        display: block;
+        width: 40px; height: 4px;
+        margin: 2px auto 8px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.28);
+    }
+    .gyp-menu-item { padding: 13px 14px; font-size: 15px; }
+
+    /* 选集面板 → 底部全宽抽屉 */
+    .gyp-ep-panel {
+        left: 0; right: 0; bottom: 0;
+        width: 100%; max-width: 100%;
+        max-height: 72%;
+        padding: 8px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+        padding-left: calc(10px + env(safe-area-inset-left, 0px));
+        padding-right: calc(10px + env(safe-area-inset-right, 0px));
+        border-radius: 20px 20px 0 0;
+        animation: gyp-sheet-up 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .gyp-ep-panel::before {
+        content: '';
+        display: block;
+        width: 40px; height: 4px;
+        margin: 2px auto 4px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.28);
+    }
+    /* 集列表项移动端加大点按高度 */
+    .gyp-ep-item { padding: 13px 12px; }
+    .gyp-ep-name { font-size: 14px; }
+    /* 季下拉移动端跟随抽屉宽度 */
+    .gyp-ep-dropdown { left: 10px; right: 10px; top: 84px; }
+
+    /* 移动端：抽屉遮罩可见且可点击关闭 */
+    .gyp-sheet-mask:not(.hidden) { opacity: 1; pointer-events: auto; }
+
+    /* 移动端 dock 防溢出：缩小按钮间距，文字按钮紧凑 */
+    .gyp-btns { gap: 0; }
+    .gyp-btn.gyp-btn-text { min-width: 40px; padding: 0 8px; }
+    /* 标题字号略减，避免挤占返回按钮 */
+    .gyp-title { font-size: 15px; }
 }
 
-/* 触屏设备始终显示解锁按钮 */
+/* ===== 竖屏窄屏（手机竖屏）：精简次要按钮，保证核心控件不溢出 ===== */
+@media (max-width: 480px) and (orientation: portrait) {
+    /* 竖屏空间紧张：画中画使用率低，隐藏让出空间 */
+    #pipBtn { display: none; }
+    /* 音量按钮在竖屏移动端意义有限（系统音量键更直接），收起 */
+    .gyp-volume { display: none; }
+    .gyp-btns { padding: 5px 6px; }
+    .gyp-btn { width: 40px; height: 40px; }
+}
+
+/* 底部抽屉上滑动画 */
+@keyframes gyp-sheet-up { from { opacity: 0.4; transform: translateY(100%); } }
+
+/* ===== 触屏设备：增大触摸命中区、常显进度滑块 ===== */
 @media (hover: none) {
+    /* 进度条命中区加高到 28px（视觉轨道不变），方便手指拖动 */
+    .gyp-progress { height: 28px; }
+    /* 触屏没有 hover，滑块默认常显（小尺寸），拖动时放大 */
+    .gyp-progress-thumb { transform: translate(-50%, -50%) scale(0.5); }
+    .gyp-progress.dragging .gyp-progress-thumb { transform: translate(-50%, -50%) scale(1.15); }
+    /* 触屏轨道略加厚，提升可见性与可操作性 */
+    .gyp-progress-track { height: 6px; }
+    .gyp-progress.dragging .gyp-progress-track { height: 8px; }
+    /* 触屏没有指针 hover，气泡仅在拖动时显示 */
+    .gyp-progress-tip { display: none; }
+    .gyp-progress.dragging .gyp-progress-tip { display: block; opacity: 1; }
+    /* 按钮 :active 缩放在触屏上保留即时反馈，但去掉 hover 背景常驻 */
+    .gyp-btn:hover { background: transparent; }
+    .gyp-btn:active { background: rgba(255,255,255,0.18); }
+    /* 触屏设备锁定时始终保留解锁按钮可点 */
     :host(.gyp-locked) .gyp-lock { opacity: 0.75; pointer-events: auto; }
 }
 
 /* 无障碍：用户偏好减少透明度 → 回退实色，关闭模糊 */
 @media (prefers-reduced-transparency: reduce) {
     .gyp-menu, .gyp-ep-panel, .gyp-hint, .gyp-resume,
-    .gyp-center-btn, .gyp-lock, .gyp-progress-tip {
+    .gyp-center-btn, .gyp-lock, .gyp-progress-tip, .gyp-vslide {
         background: var(--gyp-glass-bg-solid) !important;
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;

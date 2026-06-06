@@ -1,6 +1,6 @@
 # GY Player
 
-极致轻量的自研 Web 播放器，专为 HLS / CMAF 设计，零框架，部署到 Cloudflare Pages。
+极致轻量的自研 Web 播放器，专为 HLS / CMAF 设计，零框架，部署到 Cloudflare Workers Static Assets。
 
 > 完整对接 API 参考见 **[API.md](./API.md)**。
 
@@ -19,7 +19,8 @@
 | 音画 | 音量滑条/滚轮/静音、倍速（0.5x~3x）、多码率画质切换、外挂字幕、多音轨 |
 | 视图 | 全屏、画中画（PiP）、锁屏、沉浸式自动隐藏控件、迷你进度条 |
 | 桌面快捷键 | 空格/K 播放、←→ 快进退、↑↓ 音量、F 全屏、M 静音、P 画中画、`<` `>` 倍速、0-9 跳转 |
-| 移动手势 | 单击暂停、双击两侧快进退、横滑进度、竖滑音量/亮度、长按 2 倍速 |
+| 移动手势 | 单击暂停、双击两侧快进退（涟漪反馈）、横滑进度、竖滑亮度/音量（可视指示条）、长按 2 倍速 |
+| 移动适配 | 安全区避让（刘海/圆角）、全屏自动横屏、底部抽屉式菜单/选集、加大触摸命中区、首次手势引导 |
 | 系统集成 | Media Session（锁屏/耳机媒体控制）|
 
 ## 快速使用
@@ -102,7 +103,14 @@ npm test             # 纯逻辑单测
 npm run test:browser # headless Chrome 真实播放验证（需先启动静态服务）
 ```
 
-## 部署到 Cloudflare Pages
+> 本仓库是播放器的**唯一源**。`src/` 下是拆分模块（开发用），`npm run build`
+> 会用 esbuild 打包成单文件 `dist/gy-player.js`（自包含，含 CSS），并复制到
+> `player/gy-player.js` 作为线上稳定产物。
+>
+> `800-web` 运行时引用 `https://guangying.org/player/gy-player.js`，不再保存播放器拷贝。
+> 改播放器的流程固定为：改本仓库 `src/` → push → GitHub Actions 自动构建部署。
+
+## 部署到 Cloudflare Workers Static Assets
 
 ```bash
 npm run build

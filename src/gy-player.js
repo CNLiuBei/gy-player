@@ -13,10 +13,11 @@
 import { styles } from './styles.js';
 import { icons } from './icons.js';
 import { PlaybackEngine } from './engine.js';
-import { formatTime, clamp, supportsPiP, supportsFullscreen } from './utils.js';
+import { formatTime, clamp, supportsPiP, supportsFullscreen, isMobile } from './utils.js';
 import {
     savePlaybackTime, getPlaybackTime, clearPlaybackTime,
     saveVolume, getVolume, saveMuted, getMuted, saveRate, getRate,
+    markGestureGuideSeen, getGestureGuideSeen,
 } from './storage.js';
 import { bindControls } from './controls.js';
 import { bindGestures } from './gestures.js';
@@ -28,6 +29,13 @@ const SAVE_INTERVAL = 5;       // 进度保存间隔（秒）
 const HIDE_DELAY = 3000;       // 控件自动隐藏延迟（毫秒）
 const SEEK_STEP = 10;          // 快进/快退步长（秒）
 const EP_SEG_SIZE = 60;        // 选集分段容量（超过则分段，对标 B站长剧）
+
+// 选集日期格式化（与 web 详情页保持一致：zh-CN 长日期）
+function fmtEpDate(d) {
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }); }
+    catch { return ''; }
+}
 
 export class GYPlayer extends HTMLElement {
     static get observedAttributes() {
@@ -87,12 +95,32 @@ export class GYPlayer extends HTMLElement {
         this.shadowRoot.innerHTML = `
             <style>${styles}</style>
             <video class="gyp-video" id="video" playsinline webkit-playsinline ${poster ? `poster="${poster}"` : ''}></video>
+            <div class="gyp-brightness-overlay" id="brightnessOverlay"></div>
             <div class="gyp-surface" id="surface"></div>
 
             <div class="gyp-center" id="center"><div class="gyp-center-btn" id="centerBtn">${icons.play}</div></div>
             <div class="gyp-hint" id="hint" aria-live="polite"></div>
+
+            <!-- 移动端竖滑亮度/音量可视化指示（中央胶囊 + 进度）-->
+            <div class="gyp-vslide hidden" id="vslide">
+                <div class="gyp-vslide-icon" id="vslideIcon"></div>
+                <div class="gyp-vslide-track"><div class="gyp-vslide-fill" id="vslideFill"></div></div>
+            </div>
+
+            <!-- 移动端双击快进/快退涟漪反馈（左右两侧）-->
+            <div class="gyp-dbltap gyp-dbltap-left hidden" id="dblTapLeft">
+                <div class="gyp-dbltap-icon">${icons.rewind}</div>
+                <span class="gyp-dbltap-text">10 秒</span>
+            </div>
+            <div class="gyp-dbltap gyp-dbltap-right hidden" id="dblTapRight">
+                <div class="gyp-dbltap-icon">${icons.forward}</div>
+                <span class="gyp-dbltap-text">10 秒</span>
+            </div>
             <div class="gyp-buffering hidden" id="buffering"><div class="gyp-spinner"></div></div>
-            <div class="gyp-loading hidden" id="loading"><div class="gyp-spinner"></div></div>
+            <div class="gyp-loading hidden" id="loading">
+                <img class="gyp-loading-logo hidden" id="loadingLogo" alt="" draggable="false">
+                <div class="gyp-spinner"></div>
+            </div>
 
             <div class="gyp-top" id="top">
                 <button class="gyp-btn" id="backBtn" aria-label="返回">${icons.back}</button>
@@ -107,7 +135,22 @@ export class GYPlayer extends HTMLElement {
                 <button class="gyp-resume-btn gyp-resume-no" id="resumeNo">从头开始</button>
             </div>
 
+            <!-- 移动端首次手势引导（仅触屏首次播放显示一次）-->
+            <div class="gyp-guide hidden" id="guide">
+                <div class="gyp-guide-card">
+                    <div class="gyp-guide-title">手势操作</div>
+                    <div class="gyp-guide-row"><span class="gyp-guide-ico">${icons.forward}</span><span>横滑快进 / 快退</span></div>
+                    <div class="gyp-guide-row"><span class="gyp-guide-ico">${icons.volumeHigh}</span><span>左侧竖滑调亮度 · 右侧竖滑调音量</span></div>
+                    <div class="gyp-guide-row"><span class="gyp-guide-ico">${icons.rewind}</span><span>双击两侧快退 / 快进 10 秒</span></div>
+                    <div class="gyp-guide-row"><span class="gyp-guide-ico">${icons.play}</span><span>长按 2 倍速播放</span></div>
+                    <button class="gyp-guide-btn" id="guideBtn">知道了</button>
+                </div>
+            </div>
+
             <div class="gyp-menu hidden" id="menu"></div>
+
+            <!-- 移动端抽屉遮罩：打开菜单/选集时点击关闭 -->
+            <div class="gyp-sheet-mask hidden" id="sheetMask"></div>
 
             <div class="gyp-mini" id="mini"><div class="gyp-mini-bar" id="miniBar"></div></div>
 
@@ -179,7 +222,15 @@ export class GYPlayer extends HTMLElement {
                     <span class="gyp-ep-title">选集</span>
                     <button class="gyp-btn" id="epClose" aria-label="关闭">${icons.back}</button>
                 </div>
-                <div class="gyp-ep-seasons" id="epSeasons"></div>
+                <div class="gyp-ep-nav hidden" id="epNav">
+                    <button class="gyp-ep-arrow" id="epPrevSeason" data-dir="-1" aria-label="上一季">${icons.chevronLeft}</button>
+                    <button class="gyp-ep-current" id="epSeasonCurrent">
+                        <span class="gyp-ep-season-label"></span>
+                        <span class="gyp-ep-caret">${icons.chevronDown}</span>
+                    </button>
+                    <button class="gyp-ep-arrow" id="epNextSeason" data-dir="1" aria-label="下一季">${icons.chevronRight}</button>
+                </div>
+                <div class="gyp-ep-dropdown hidden" id="epSeasons" role="listbox"></div>
                 <div class="gyp-ep-segments hidden" id="epSegments"></div>
                 <div class="gyp-ep-list" id="epList"></div>
             </div>
@@ -192,8 +243,10 @@ export class GYPlayer extends HTMLElement {
         this.video = $('video');
         this.els = {
             surface: $('surface'), top: $('top'), bottom: $('bottom'),
+            brightnessOverlay: $('brightnessOverlay'),
             center: $('center'), centerBtn: $('centerBtn'),
             hint: $('hint'), buffering: $('buffering'), loading: $('loading'),
+            loadingLogo: $('loadingLogo'),
             backBtn: $('backBtn'), lockBtn: $('lockBtn'),
             playBtn: $('playBtn'), prevBtn: $('prevBtn'), nextBtn: $('nextBtn'),
             volume: $('volume'), volumeBtn: $('volumeBtn'), volumeSlider: $('volumeSlider'),
@@ -202,6 +255,8 @@ export class GYPlayer extends HTMLElement {
             subtitleBtn: $('subtitleBtn'), pipBtn: $('pipBtn'), fsBtn: $('fsBtn'),
             episodesBtn: $('episodesBtn'), epPanel: $('epPanel'),
             epClose: $('epClose'), epSeasons: $('epSeasons'),
+            epNav: $('epNav'), epSeasonCurrent: $('epSeasonCurrent'),
+            epPrevSeason: $('epPrevSeason'), epNextSeason: $('epNextSeason'),
             epSegments: $('epSegments'), epList: $('epList'),
             progress: $('progress'), played: $('played'), buffered: $('buffered'),
             thumb: $('thumb'), tip: $('tip'),
@@ -209,6 +264,10 @@ export class GYPlayer extends HTMLElement {
             mini: $('mini'), miniBar: $('miniBar'), menu: $('menu'),
             resume: $('resume'), resumeText: $('resumeText'),
             resumeYes: $('resumeYes'), resumeNo: $('resumeNo'),
+            dblTapLeft: $('dblTapLeft'), dblTapRight: $('dblTapRight'),
+            sheetMask: $('sheetMask'),
+            vslide: $('vslide'), vslideIcon: $('vslideIcon'), vslideFill: $('vslideFill'),
+            guide: $('guide'), guideBtn: $('guideBtn'),
         };
         this._titleEl = $('title');
     }
@@ -233,6 +292,7 @@ export class GYPlayer extends HTMLElement {
         v.addEventListener('play', () => {
             this.els.playBtn.innerHTML = icons.pause;
             this._flashCenter(icons.play);
+            this._maybeShowGuide();   // 首次播放展示移动端手势引导
         }, sig);
         v.addEventListener('pause', () => {
             this.els.playBtn.innerHTML = icons.play;
@@ -351,6 +411,9 @@ export class GYPlayer extends HTMLElement {
                 this.dispatchEvent(new CustomEvent('error', { detail }));
             },
             onLevelSwitched: () => this._refreshQualityLabel(),
+        }, {
+            preferHDR: opts.preferHDR === true,
+            allowedVideoRanges: opts.allowedVideoRanges,
         });
 
         await this.engine.load(url);
@@ -489,6 +552,21 @@ export class GYPlayer extends HTMLElement {
     showPrevButton(visible) { this.els.prevBtn.classList.toggle('hidden', !visible); }
 
     /**
+     * 设置加载态 logo（剧集 logo 优先，无则用网站 logo）
+     * @param {string} url logo 图片地址
+     */
+    setLogo(url) {
+        const el = this.els.loadingLogo;
+        if (!el) return;
+        if (url) {
+            el.src = url;
+            el.classList.remove('hidden');
+        } else {
+            el.classList.add('hidden');
+        }
+    }
+
+    /**
      * 设置剧集列表（启用播放器内选集面板）
      * @param {Array} episodes [{id, title, season, episode}]
      * @param {string} currentId 当前播放集 id
@@ -519,12 +597,20 @@ export class GYPlayer extends HTMLElement {
         const curEp = eps.find((v) => v.id === this._currentEpId);
         const activeSeason = this._activeSeason || (curEp ? String(curEp.season || 1) : keys[0]);
         this._activeSeason = activeSeason;
+        this._seasonKeys = keys; // 供上/下一季箭头导航
 
-        // 季标签
-        this.els.epSeasons.classList.toggle('hidden', !multi);
+        // 季导航（箭头 + 当前季 + 下拉），仅多季时显示
+        this.els.epNav.classList.toggle('hidden', !multi);
         if (multi) {
+            const idx = keys.indexOf(activeSeason);
+            const label = this.els.epSeasonCurrent.querySelector('.gyp-ep-season-label');
+            if (label) label.textContent = `第${activeSeason}季`;
+            this.els.epPrevSeason.disabled = idx <= 0;
+            this.els.epNextSeason.disabled = idx >= keys.length - 1;
             this.els.epSeasons.innerHTML = keys.map((s) =>
-                `<button class="gyp-ep-season ${s === activeSeason ? 'active' : ''}" data-season="${s}">第${s}季</button>`).join('');
+                `<button class="gyp-ep-option ${s === activeSeason ? 'active' : ''}" data-season="${s}" role="option">第${s}季</button>`).join('');
+        } else {
+            this.els.epSeasons.classList.add('hidden');
         }
 
         // 当前季全部集（排序）
@@ -560,17 +646,23 @@ export class GYPlayer extends HTMLElement {
         this._renderEpisodeItems();
     }
 
-    /** 渲染当前段的集号项 */
+    /** 渲染当前段的集号项（结构对齐 web 详情页剧集列表）*/
     _renderEpisodeItems() {
         const all = this._epSeasonList || [];
         const from = (this._activeSeg || 0) * EP_SEG_SIZE;
         const list = all.slice(from, from + EP_SEG_SIZE);
         this.els.epList.innerHTML = list.map((v) => {
             const active = v.id === this._currentEpId ? 'active' : '';
+            const hasSource = v.available ? 'has-source' : '';
             const label = (v.title || `第${v.episode}集`).replace(/</g, '&lt;');
-            return `<button class="gyp-ep-item ${active}" data-id="${String(v.id).replace(/"/g, '&quot;')}" title="${label.replace(/"/g, '&quot;')}">
-                <span class="gyp-ep-num">${v.episode || ''}</span>
-                <span class="gyp-ep-name">${label}</span>
+            const date = fmtEpDate(v.released);
+            return `<button class="gyp-ep-item ${active} ${hasSource}" data-id="${String(v.id).replace(/"/g, '&quot;')}" title="${label.replace(/"/g, '&quot;')}">
+                <span class="gyp-ep-line">
+                    <span class="gyp-ep-num">${v.episode || ''}.</span>
+                    <span class="gyp-ep-name">${label}</span>
+                    ${v.available ? '<span class="gyp-ep-dot" title="可播放"></span>' : ''}
+                </span>
+                ${date ? `<span class="gyp-ep-date">${date}</span>` : ''}
             </button>`;
         }).join('');
     }
@@ -581,10 +673,12 @@ export class GYPlayer extends HTMLElement {
         if (show) this.closeMenu?.(); // 与设置菜单互斥
         this.els.epPanel.classList.toggle('hidden', !show);
         if (show) {
+            this._showSheetMask();
             // 滚动到当前集
             const active = this.els.epList.querySelector('.gyp-ep-item.active');
             active?.scrollIntoView({ block: 'center' });
         }
+        this._syncSheetMask();
     }
 
     toggleFullscreen() {
@@ -592,7 +686,9 @@ export class GYPlayer extends HTMLElement {
         if (doc.fullscreenElement || doc.webkitFullscreenElement) {
             (doc.exitFullscreen || doc.webkitExitFullscreen).call(doc);
         } else if (this.requestFullscreen) {
-            this.requestFullscreen().catch(() => this._iosFullscreen());
+            this.requestFullscreen()
+                .then(() => this._lockLandscape())
+                .catch(() => this._iosFullscreen());
         } else {
             this._iosFullscreen();
         }
@@ -600,6 +696,29 @@ export class GYPlayer extends HTMLElement {
     /** iOS 不支持元素全屏，回退到 video 原生全屏 */
     _iosFullscreen() {
         if (this.video.webkitEnterFullscreen) this.video.webkitEnterFullscreen();
+    }
+
+    /**
+     * 进入全屏时锁定横屏（仅移动端、竖向视频除外）。
+     * Screen Orientation lock 仅在部分 Android 浏览器支持，iOS Safari 不支持，
+     * 失败静默忽略（用户仍可手动旋转）。
+     */
+    _lockLandscape() {
+        if (!isMobile) return;
+        const so = screen.orientation;
+        if (!so || typeof so.lock !== 'function') return;
+        // 竖向视频（高>宽）不强制横屏，避免竖屏短视频被旋转
+        const vw = this.video.videoWidth || 16;
+        const vh = this.video.videoHeight || 9;
+        if (vh > vw) return;
+        so.lock('landscape').catch(() => {}); // 不支持则静默
+    }
+    /** 退出全屏时解除方向锁定 */
+    _unlockOrientation() {
+        const so = screen.orientation;
+        if (so && typeof so.unlock === 'function') {
+            try { so.unlock(); } catch { /* 忽略不支持 */ }
+        }
     }
 
     togglePiP() {
@@ -645,6 +764,90 @@ export class GYPlayer extends HTMLElement {
         this.els.hint.classList.add('visible');
         clearTimeout(this._hintTimer);
         this._hintTimer = setTimeout(() => this.els.hint.classList.remove('visible'), 700);
+    }
+    /** 常驻提示（长按倍速等持续手势用）：显示后不自动消失，需手动 hideHint */
+    showHintHold(text) {
+        clearTimeout(this._hintTimer);
+        this.els.hint.textContent = text;
+        this.els.hint.classList.add('visible');
+    }
+    /** 隐藏常驻提示 */
+    hideHint() {
+        clearTimeout(this._hintTimer);
+        this.els.hint.classList.remove('visible');
+    }
+
+    /**
+     * 双击快进/快退涟漪反馈（移动端）。连续双击累加秒数，对标 YouTube/Bilibili。
+     * @param {'left'|'right'} side 触发侧
+     * @param {number} seconds 本次步进秒数（正数）
+     */
+    flashDoubleTap(side, seconds) {
+        const el = side === 'left' ? this.els.dblTapLeft : this.els.dblTapRight;
+        const other = side === 'left' ? this.els.dblTapRight : this.els.dblTapLeft;
+        other.classList.add('hidden');
+        other.classList.remove('active');
+        // 同侧连续触发则累加秒数
+        if (this._dblTapSide === side && this._dblTapTimer) {
+            this._dblTapAccum += seconds;
+        } else {
+            this._dblTapAccum = seconds;
+        }
+        this._dblTapSide = side;
+        el.querySelector('.gyp-dbltap-text').textContent = `${this._dblTapAccum} 秒`;
+        el.classList.remove('hidden');
+        // 重启动画
+        el.classList.remove('active');
+        void el.offsetWidth;
+        el.classList.add('active');
+        clearTimeout(this._dblTapTimer);
+        this._dblTapTimer = setTimeout(() => {
+            el.classList.add('hidden');
+            el.classList.remove('active');
+            this._dblTapTimer = null;
+            this._dblTapSide = null;
+        }, 600);
+    }
+
+    /**
+     * 竖滑亮度/音量可视化指示（移动端）。显示中央胶囊 + 进度条。
+     * @param {'volume'|'brightness'} kind 类型
+     * @param {number} ratio 0~1 比例（亮度可超过 1，内部夹紧到 0~1 显示）
+     * @param {string} iconHtml 图标 SVG
+     */
+    showVSlide(kind, ratio, iconHtml) {
+        const pct = clamp(ratio, 0, 1) * 100;
+        this.els.vslideIcon.innerHTML = iconHtml;
+        this.els.vslideFill.style.width = `${pct}%`;
+        this.els.vslide.classList.remove('hidden');
+        clearTimeout(this._vslideTimer);
+        this._vslideTimer = setTimeout(() => {
+            this.els.vslide.classList.add('hidden');
+        }, 600);
+    }
+    /** 立即隐藏竖滑指示 */
+    hideVSlide() {
+        clearTimeout(this._vslideTimer);
+        this.els.vslide.classList.add('hidden');
+    }
+
+    /**
+     * 移动端首次手势引导：仅触屏设备、未展示过时显示一次。
+     * 由首次播放触发，点击「知道了」或 5 秒后自动消失。
+     */
+    _maybeShowGuide() {
+        if (this._guideShown) return;
+        if (!('ontouchstart' in window)) return;       // 仅触屏
+        if (getGestureGuideSeen()) return;              // 已看过
+        this._guideShown = true;
+        markGestureGuideSeen();
+        this.els.guide.classList.remove('hidden');
+        const close = () => {
+            this.els.guide.classList.add('hidden');
+            clearTimeout(this._guideTimer);
+        };
+        this.els.guideBtn.addEventListener('click', close, { once: true, signal: this._ac?.signal });
+        this._guideTimer = setTimeout(close, 5000);
     }
     _flashCenter(iconHtml) {
         this.els.centerBtn.innerHTML = iconHtml;
@@ -692,6 +895,7 @@ export class GYPlayer extends HTMLElement {
         this.toggleEpisodePanel(false); // 与选集面板互斥
         this._menuOpen = type;
         this.els.menu.classList.remove('hidden');
+        this._showSheetMask();
         this.els.menu.innerHTML = this._buildMenu(type);
         this._bindMenuItems(type);
         // 焦点移到首个菜单项，支持键盘导航
@@ -703,6 +907,18 @@ export class GYPlayer extends HTMLElement {
         if (!this._menuOpen) return;
         this._menuOpen = false;
         this.els.menu.classList.add('hidden');
+        this._syncSheetMask();
+    }
+
+    /** 显示抽屉遮罩（移动端底部抽屉用，CSS 控制是否可见）*/
+    _showSheetMask() {
+        this.els.sheetMask?.classList.remove('hidden');
+    }
+    /** 根据菜单/选集面板是否打开，决定遮罩显隐 */
+    _syncSheetMask() {
+        const epOpen = !this.els.epPanel.classList.contains('hidden');
+        const menuOpen = !this.els.menu.classList.contains('hidden');
+        this.els.sheetMask?.classList.toggle('hidden', !epOpen && !menuOpen);
     }
     /** 菜单内方向键导航 + Enter 选择 + Esc 关闭 */
     _bindMenuKeys() {

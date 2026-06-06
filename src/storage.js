@@ -127,3 +127,18 @@ export function getRate() {
     const num = parseFloat(val);
     return isFinite(num) && num > 0 ? num : 1;
 }
+
+/**
+ * 标记移动端手势引导已展示（只展示一次）
+ */
+export function markGestureGuideSeen() {
+    safeSet('gesture_guide_seen', '1');
+}
+
+/**
+ * 是否已展示过移动端手势引导
+ * @returns {boolean} 已展示返回 true
+ */
+export function getGestureGuideSeen() {
+    return safeGet('gesture_guide_seen') === '1';
+}
