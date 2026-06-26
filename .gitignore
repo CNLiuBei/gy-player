@@ -4,7 +4,6 @@ package-lock.json
 
 # 构建产物
 dist/
-player/
 
 # 系统文件
 .DS_Store
@@ -23,3 +22,4 @@ npm-debug.log*
 # 临时文件
 *.tmp
 /tmp/
+${userDataDir}/

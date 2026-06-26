@@ -1,7 +1,7 @@
 // 控件绑定 — 按钮点击、进度条拖拽、音量滑条
 // 从主组件拆出，保持 gy-player.js 精简
 
-import { clamp, formatTime, supportsPiP } from './utils.js';
+import { clamp, formatTime, supportsPiP, hasTouchInput } from './utils.js';
 import { saveVolume, saveMuted } from './storage.js';
 import { icons } from './icons.js';
 
@@ -32,6 +32,7 @@ export function bindControls(player, signal) {
     els.speedBtn.addEventListener('click', () => player.toggleMenu('speed'), sig);
     els.qualityBtn.addEventListener('click', () => player.toggleMenu('quality'), sig);
     els.subtitleBtn.addEventListener('click', () => player.toggleMenu('subtitle'), sig);
+    els.settingsBtn.addEventListener('click', () => player.toggleMenu('settings'), sig);
 
     // 选集面板
     els.episodesBtn.addEventListener('click', () => player.toggleEpisodePanel(), sig);
@@ -89,16 +90,18 @@ export function bindControls(player, signal) {
         player.toggleEpisodePanel(false);
     }, sig);
 
-    // 点击行为：
-    //   桌面端 — 单击播放/暂停，双击全屏。用延时区分单/双击，避免双击时
-    //            误触两次 togglePlay 导致画面闪烁。
-    //   移动端 — 单击仅切换控件显隐（播放/暂停与双击快进由手势模块处理）。
-    const isTouch = 'ontouchstart' in window;
+    // 点击行为（YouTube 式）：
+    //   桌面 — 鼠标移动唤出控件；单击画面切换播放/暂停；双击全屏。
+    //   触屏 — 单击切换控件显隐由 gestures 延迟触发；合成 click 仅作兜底并受 suppress 保护。
     let clickTimer = null;
-    els.surface.addEventListener('click', () => {
+    const onSurfaceClick = () => {
+        if (hasTouchInput()) {
+            if (Date.now() < (player._suppressSurfaceClickUntil || 0)) return;
+            return;
+        }
         if (player._menuOpen) { player.closeMenu(); return; }
-        if (isTouch) {
-            player.toggleControls();
+        if (player.classList.contains('gyp-immersed')) {
+            player._showControls?.();
             return;
         }
         if (clickTimer) return;
@@ -106,34 +109,39 @@ export function bindControls(player, signal) {
             clickTimer = null;
             player.togglePlay();
         }, 220);
-    }, sig);
+    };
+    els.surface.addEventListener('click', onSurfaceClick, sig);
     els.surface.addEventListener('dblclick', () => {
-        if (isTouch) return;
+        if (hasTouchInput()) return;
         if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
         player.toggleFullscreen();
     }, sig);
 
-    // 全屏状态变化 → 更新图标
-    const onFsChange = () => {
-        const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
-        player.classList.toggle('gyp-fullscreen', isFs);
-        els.fsBtn.innerHTML = isFs ? icons.exitFullscreen : icons.fullscreen;
-        // 退出全屏时解除横屏锁定
-        if (!isFs) player._unlockOrientation?.();
-    };
+    // 全屏状态变化 → 更新图标（含 iOS 伪全屏）
+    const onFsChange = () => player._updateFullscreenUI?.();
     document.addEventListener('fullscreenchange', onFsChange, sig);
     document.addEventListener('webkitfullscreenchange', onFsChange, sig);
 
     bindProgressDrag(player, signal);
     bindVolume(player, signal);
 
-    // 鼠标悬停在控制栏上时，暂停自动隐藏（避免操作中控件消失）
-    const holdShow = () => { player._controlsHovered = true; player._showControls?.(); };
-    const releaseShow = () => { player._controlsHovered = false; player._showControls?.(); };
-    els.bottom.addEventListener('mouseenter', holdShow, sig);
-    els.bottom.addEventListener('mouseleave', releaseShow, sig);
-    els.top.addEventListener('mouseenter', holdShow, sig);
-    els.top.addEventListener('mouseleave', releaseShow, sig);
+    // 鼠标/触摸在控制栏上时暂停自动隐藏，离开后重新计时
+    const holdShow = () => {
+        player._cancelPendingSurfaceTap?.();
+        player._controlsHovered = true;
+        player._showControls?.();
+    };
+    const releaseShow = () => {
+        player._controlsHovered = false;
+        player._scheduleAutoHide?.();
+    };
+    for (const el of [els.bottom, els.top, els.menu, els.epPanel]) {
+        el.addEventListener('mouseenter', holdShow, sig);
+        el.addEventListener('mouseleave', releaseShow, sig);
+        el.addEventListener('touchstart', holdShow, { signal, passive: true });
+        el.addEventListener('touchend', releaseShow, sig);
+        el.addEventListener('touchcancel', releaseShow, sig);
+    }
 }
 
 /**
@@ -160,7 +168,7 @@ function bindProgressDrag(player, signal) {
     };
     const commit = (clientX) => {
         const pct = pctFromX(clientX);
-        if (v.duration) v.currentTime = pct * v.duration;
+        if (v.duration) player.seek(pct * v.duration);
     };
 
     // 鼠标拖拽

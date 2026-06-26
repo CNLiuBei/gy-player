@@ -1,13 +1,13 @@
 # GY Player
 
-极致轻量的自研 Web 播放器，专为 HLS / CMAF 设计，零框架，部署到 Cloudflare Workers Static Assets。
+极致轻量的自研 Web 播放器，专为 HLS / CMAF 设计，零框架，发布到 R2 CDN（`cdn.guangying.org`）。
 
 > 完整对接 API 参考见 **[API.md](./API.md)**。
 
 ## 特性
 
 - **体积极小**：UI 皮肤打包后 **14 KB gzip**，含全部交互逻辑
-- **引擎按需加载**：Safari / iOS 走原生 HLS（**零额外依赖**），Chrome / Firefox / Android 才动态加载 hls.js
+- **引擎按需加载**：MP4 直链走原生（**零额外依赖**），HLS/DASH 才动态加载 Shaka Player
 - **零框架**：原生 Web Component + Shadow DOM，样式隔离，可嵌入任意页面
 - **无 rAF 轮询**：只监听原生 `video` 事件更新 UI，CPU 占用低
 
@@ -76,10 +76,10 @@ player.loadStream(url, { videoId: 'ep-1', startTime: serverPos, disableStorage: 
 
 **职责边界**：播放器管「播放位置的记录与恢复」；Web 前端管「历史列表、跨设备同步、继续观看模块、追剧收藏」。
 
-### 自托管 hls.js（不走 CDN）
+### 自托管 Shaka Player（不走 CDN）
 
 ```html
-<script>window.GYP_HLS_URL = '/vendor/hls.min.js';</script>
+<script>window.GYP_SHAKA_URL = '/vendor/shaka-player.compiled.js';</script>
 ```
 
 ## 自定义主题
@@ -97,44 +97,47 @@ gy-player {
 
 ```bash
 npm install          # 安装 esbuild（仅构建用）
-npm run dev          # wrangler 本地预览（或 python3 -m http.server）
+npm run dev          # 构建后用 python3 本地预览 index.html
+npm run demo         # 联调 guangying.org 片源（先 build）
 npm run build        # 打包到 dist/
 npm test             # 纯逻辑单测
 npm run test:browser # headless Chrome 真实播放验证（需先启动静态服务）
 ```
 
 > 本仓库是播放器的**唯一源**。`src/` 下是拆分模块（开发用），`npm run build`
-> 会用 esbuild 打包成单文件 `dist/gy-player.js`（自包含，含 CSS），并复制到
-> `player/gy-player.js` 作为线上稳定产物。
+> 会打包成单文件 `dist/gy-player.js`（自包含，含 CSS），`npm run deploy` 编译发布。
 >
-> `800-web` 运行时引用 `https://guangying.org/player/gy-player.js`，不再保存播放器拷贝。
-> 改播放器的流程固定为：改本仓库 `src/` → push → GitHub Actions 自动构建部署。
+> `800-web` 在运行时会先请求 CDN 的 `manifest.json`，然后动态 `import()` 最新哈希的播放器文件。
+> 修改播放器流程：改 `src/` → `npm run deploy`（或 push main 触发 CI）。Web 端完全无需做任何修改，即可秒级生效最新版本。
 
-## 部署到 Cloudflare Workers Static Assets
+## 发布到 R2 CDN
 
 ```bash
 npm run build
-npm run deploy
+npm run publish   # 上传带哈希的播放器及更新 manifest.json
+npm run deploy    # build + publish 一键部署
 ```
 
-纯静态资源，无服务端。
+每次发布会上传两个文件到 R2 桶 `flix-800-assets`：
+1. `static/player/gy-player.<hash>.js`（强缓存：`max-age=31536000, immutable`）
+2. `static/player/manifest.json`（无缓存：`no-cache, no-store`，记录最新哈希地址及构建时间）
+
 
 ## 体积构成
 
 ```
 UI 皮肤（全部交互）   14 KB gzip   ← 始终加载
-hls.js（按需）       160 KB gzip  ← 仅 Chrome/FF/Android 在播放 HLS 时加载
-Safari / iOS                      ← 原生播放，仅 14 KB
+Shaka Player（按需）  ~180 KB gzip  ← HLS/DASH 播放时加载
+MP4 直链                           ← 原生播放，仅 14 KB
 ```
 
 ## 浏览器支持
 
 | 浏览器 | 引擎 | 画质切换 |
 |--------|------|---------|
-| Safari / iOS | 原生 HLS | 由系统自适应 |
-| Chrome / Edge | hls.js | ✅ 手动 + 自动 |
-| Firefox | hls.js | ✅ 手动 + 自动 |
-| Android Chrome | hls.js | ✅ 手动 + 自动 |
+| 全平台 HLS/DASH | Shaka Player | ✅ 手动 + 自动 |
+| MP4 直链 | 原生 video | 由源决定 |
+| Shaka 不可用（Safari 兜底） | 原生 HLS | 由系统自适应 |
 
 ## License
 

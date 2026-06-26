@@ -19,6 +19,10 @@ export const styles = `
     --gyp-track: rgba(255, 255, 255, 0.28);
     --gyp-buffered: rgba(255, 255, 255, 0.45);
 
+    /* 字幕字号由 layoutVideoBox 按画面高度写入 --gyp-subtitle-size */
+    --gyp-subtitle-scale: 1;
+    --gyp-subtitle-size: clamp(0.75rem, 0.42rem + 1.1vw, 1rem);
+
     display: block;
     position: relative;
     width: 100%;
@@ -30,7 +34,6 @@ export const styles = `
     user-select: none;
     -webkit-user-select: none;
     overflow: hidden;
-    contain: layout style;
 }
 
 :host(.gyp-fullscreen) {
@@ -40,16 +43,184 @@ export const styles = `
     width: 100vw;
     height: 100vh;
     height: 100dvh;   /* 动态视口：避开移动浏览器地址栏伸缩导致的高度跳变 */
+    max-width: none;
+    max-height: none;
+    background: #000;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+.gyp-media {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    z-index: 0;
+}
+
+.gyp-video-box {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    container-type: size;
+}
 
 .gyp-video {
     width: 100%;
     height: 100%;
     display: block;
-    background: #000;
-    object-fit: var(--gyp-fit, contain);
+    background: transparent;
+    object-fit: contain;
+}
+
+
+
+.gyp-subtitle-overlay {
+    position: absolute;
+    z-index: 8;
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: 92%;
+    padding: 0.15em 0.55em;
+    border-radius: 0.25em;
+    font-size: var(--gyp-subtitle-size, clamp(0.75rem, calc(4.2cqh + 0.35rem), 1.35rem));
+    line-height: 1.25;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.42);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    text-align: center;
+    white-space: pre-wrap;
+    pointer-events: none;
+    box-sizing: border-box;
+    transition: top 0.3s cubic-bezier(0.32, 0.72, 0, 1), bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1), transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 非系统全屏/画中画：弱化原生 track，走 overlay（勿 display:none，会阻止 WebKit 加载 cues） */
+:host(:not(.gyp-ios-native-fs):not(.gyp-pip-active)) .gyp-video::cue {
+    opacity: 0;
+}
+:host(:not(.gyp-ios-native-fs):not(.gyp-pip-active)) .gyp-video::-webkit-media-text-track-container {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.gyp-danmaku-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.gyp-danmaku-item {
+    position: absolute;
+    left: 100%;
+    max-width: 92%;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.28);
+    color: #fff;
+    font-size: clamp(0.75rem, calc(3.8cqh + 0.25rem), 1.05rem);
+    font-weight: 700;
+    line-height: 1.35;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+    white-space: nowrap;
+    will-change: transform;
+}
+
+.gyp-danmaku-item.is-scroll {
+    animation: gyp-danmaku-scroll 7.2s linear forwards;
+}
+
+.gyp-danmaku-item.is-top,
+.gyp-danmaku-item.is-bottom {
+    left: 50%;
+    transform: translateX(-50%);
+    animation: gyp-danmaku-fixed 3.4s ease forwards;
+}
+
+.gyp-danmaku-item.is-local {
+    background: rgba(10, 132, 255, 0.35);
+}
+
+@keyframes gyp-danmaku-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(calc(-100% - var(--gyp-danmaku-travel, 100%))); }
+}
+
+@keyframes gyp-danmaku-fixed {
+    0%, 82% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+.gyp-danmaku-inline {
+    flex: 0 1 min(420px, 40vw);
+    min-width: 0;
+    width: min(420px, 40vw);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    z-index: 3;
+}
+
+.gyp-danmaku-inline input,
+.gyp-danmaku-inline button {
+    min-height: 32px;
+    border: 0;
+    border-radius: 999px;
+    font: inherit;
+    color: #fff;
+}
+
+.gyp-danmaku-inline button {
+    flex: 0 0 auto;
+    padding: 0 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.gyp-danmaku-send {
+    background: var(--gyp-glass-bg);
+    backdrop-filter: var(--gyp-glass-blur);
+    -webkit-backdrop-filter: var(--gyp-glass-blur);
+    border: 0.5px solid var(--gyp-glass-border);
+    box-shadow: var(--gyp-glass-rim);
+    font-weight: 600;
+    transition: background 0.16s ease, transform 0.12s ease;
+}
+
+.gyp-danmaku-send:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.gyp-danmaku-send:active {
+    transform: scale(0.96);
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.gyp-danmaku-inline button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.gyp-danmaku-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0 12px;
+    background: rgba(255, 255, 255, 0.14);
+    outline: none;
+}
+
+.gyp-danmaku-input::placeholder {
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.gyp-danmaku-input:disabled {
+    opacity: 0.5;
 }
 
 .gyp-brightness-overlay {
@@ -142,13 +313,27 @@ export const styles = `
 .gyp-btns {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 8px;
     position: relative;
     padding: 6px 10px;
     border-radius: 24px;
     isolation: isolate;
     box-shadow: 0 6px 18px rgba(0,0,0,0.28), 0 0 24px rgba(0,0,0,0.12);
 }
+
+.gyp-btns-leading,
+.gyp-btns-trailing {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1 1 0;
+    min-width: 0;
+    position: relative;
+    z-index: 3;
+}
+
+.gyp-btns-leading { justify-content: flex-start; }
+.gyp-btns-trailing { justify-content: flex-end; }
 /* 玻璃三层：铺满 dock，圆角继承 */
 .gyp-glass, .gyp-glass > div {
     position: absolute;
@@ -177,17 +362,42 @@ export const styles = `
         inset -1px -1px 1px 1px rgba(255,255,255,0.12);
 }
 /* dock 内的按钮等内容浮在玻璃之上 */
-.gyp-btns > .gyp-btn,
-.gyp-btns > .gyp-volume,
-.gyp-btns > .gyp-spacer { position: relative; z-index: 3; }
+.gyp-btns > .gyp-btns-leading,
+.gyp-btns > .gyp-btns-trailing,
+.gyp-btns > .gyp-danmaku-inline { position: relative; z-index: 3; }
+.gyp-btns-leading > .gyp-btn,
+.gyp-btns-leading > .gyp-volume,
+.gyp-btns-trailing > .gyp-btn { position: relative; z-index: 3; }
 /* SVG 滤镜容器：不占布局 */
 .gyp-glass-svg { position: absolute; width: 0; height: 0; pointer-events: none; }
 
-/* 隐藏控件（沉浸态）：dock 下滑淡出，scrim 同步淡出 */
-:host(.gyp-immersed) .gyp-top { opacity: 0; pointer-events: none; transform: translateY(-10px); }
-:host(.gyp-immersed) .gyp-bottom { opacity: 0; pointer-events: none; transform: translateY(18px); }
-:host(.gyp-immersed) .gyp-scrim { opacity: 0; }
-:host(.gyp-immersed) .gyp-mini { opacity: 1; }
+/* 隐藏控件（沉浸态）：dock 下滑淡出，scrim 同步淡出；禁用命中与可见性 */
+:host(.gyp-immersed) .gyp-top,
+:host(.gyp-immersed) .gyp-bottom {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+    transform: translateY(-10px);
+}
+:host(.gyp-immersed) .gyp-bottom { transform: translateY(18px); }
+:host(.gyp-immersed) .gyp-scrim { opacity: 0; pointer-events: none; }
+:host(.gyp-immersed) .gyp-mini { opacity: 1; pointer-events: none; }
+/* 沉浸态：全屏点击层置顶，任意区域可唤出控件（避免点到透明控件） */
+:host(.gyp-immersed) .gyp-surface { z-index: 30; }
+:host(.gyp-locked.gyp-immersed) .gyp-surface { z-index: 8; }
+:host(.gyp-immersed:not(.gyp-locked)) .gyp-lock {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+}
+
+/* 详情页内嵌：隐藏顶栏（页面自有标题/导航），沉浸时保留迷你进度条 */
+:host(.gyp-layout-inline) .gyp-top { display: none; }
+:host(.gyp-layout-inline.gyp-immersed) .gyp-mini {
+    height: 4px;
+    opacity: 1;
+    z-index: 11;
+}
 
 /* 锁定态：隐藏所有控件，只留解锁按钮 */
 :host(.gyp-locked) .gyp-top,
@@ -342,7 +552,8 @@ export const styles = `
 }
 .gyp-btn:hover { background: rgba(255,255,255,0.18); }
 .gyp-btn:active { transform: scale(0.9); }
-.gyp-btn:focus-visible { outline: 2px solid var(--gyp-accent); outline-offset: 1px; }
+.gyp-btn:focus { outline: none; }
+.gyp-btn:focus-visible { outline: none; }
 .gyp-btn svg { width: 22px; height: 22px; display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.25)); }
 .gyp-btn.gyp-btn-text {
     width: auto;
@@ -671,7 +882,7 @@ export const styles = `
     transition: opacity 0.3s ease;
 }
 :host(.gyp-locked) .gyp-lock,
-:host(:not(.gyp-immersed)) .gyp-lock { opacity: 1; }
+:host(:not(.gyp-immersed)) .gyp-lock { opacity: 1; visibility: visible; pointer-events: auto; }
 
 /* ===== 选集面板（与设置菜单统一：右下浮起玻璃面板）===== */
 .gyp-ep-panel {
@@ -869,6 +1080,11 @@ export const styles = `
 }
 .gyp-menu-item.active .gyp-menu-check { opacity: 1; }
 .gyp-menu-item.active { color: #fff; font-weight: 600; }
+.gyp-menu-item.is-disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+    pointer-events: none;
+}
 
 /* ===== 续播提示条（液态玻璃胶囊）===== */
 .gyp-resume {
@@ -922,6 +1138,14 @@ export const styles = `
     padding: 24px;
 }
 .gyp-error-msg { font-size: 15px; font-weight: 500; opacity: 0.92; max-width: 400px; line-height: 1.5; }
+.gyp-error-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    max-width: min(520px, 100%);
+}
 .gyp-error-btn {
     padding: 11px 28px;
     border-radius: 16px;
@@ -934,12 +1158,33 @@ export const styles = `
     box-shadow: 0 4px 16px rgba(255,69,58,0.4);
     box-shadow: 0 4px 16px color-mix(in srgb, var(--gyp-accent) 45%, transparent);
     transition: transform 0.12s ease;
+    white-space: nowrap;
+}
+.gyp-error-btn.secondary {
+    background: rgba(255,255,255,0.14);
+    color: #fff;
+    border: 0.5px solid rgba(255,255,255,0.18);
+    box-shadow: none;
 }
 .gyp-error-btn:active { transform: scale(0.95); }
 /* ===== 移动端适配 ===== */
 @media (max-width: 640px) {
     .gyp-volume-slider { display: none; }
-    .gyp-btn { width: 42px; height: 42px; }
+    /* 精简 dock：仅保留播放 / 设置 / 画中画 / 全屏 */
+    .gyp-btns-leading #prevBtn,
+    .gyp-btns-leading #nextBtn,
+    .gyp-btns-leading .gyp-volume,
+    .gyp-btns-trailing #episodesBtn,
+    .gyp-btns-trailing #speedBtn,
+    .gyp-btns-trailing #qualityBtn,
+    .gyp-btns-trailing #subtitleBtn {
+        display: none !important;
+    }
+    .gyp-btns-leading,
+    .gyp-btns-trailing {
+        flex: 0 0 auto;
+    }
+    .gyp-btn { width: 40px; height: 40px; }
     .gyp-time { font-size: 12px; }
     .gyp-top {
         padding: 12px 14px;
@@ -956,6 +1201,26 @@ export const styles = `
     }
     .gyp-btns { padding: 5px 8px; border-radius: 22px; }
     .gyp-progress-bar { gap: 8px; padding: 0 4px; }
+    .gyp-danmaku-inline {
+        flex: 1 1 0;
+        width: auto;
+        min-width: 0;
+        max-width: none;
+        gap: 4px;
+    }
+    .gyp-danmaku-inline input,
+    .gyp-danmaku-inline button {
+        min-height: 30px;
+        font-size: 12px;
+    }
+    .gyp-danmaku-input {
+        padding: 0 8px;
+    }
+    .gyp-danmaku-send {
+        padding: 0 8px;
+        font-size: 12px;
+        flex-shrink: 0;
+    }
 
     /* 设置菜单 → 底部全宽抽屉（bottom sheet），更易拇指点按 */
     .gyp-menu {
@@ -979,6 +1244,15 @@ export const styles = `
         background: rgba(255,255,255,0.28);
     }
     .gyp-menu-item { padding: 13px 14px; font-size: 15px; }
+    .gyp-error-actions {
+        width: 100%;
+        max-width: 280px;
+        flex-direction: column;
+    }
+    .gyp-error-btn {
+        width: 100%;
+        min-height: 44px;
+    }
 
     /* 选集面板 → 底部全宽抽屉 */
     .gyp-ep-panel {
@@ -1015,14 +1289,17 @@ export const styles = `
     .gyp-title { font-size: 15px; }
 }
 
-/* ===== 竖屏窄屏（手机竖屏）：精简次要按钮，保证核心控件不溢出 ===== */
+/* ===== 竖屏窄屏（手机竖屏）：进一步压缩弹幕与按钮间距 ===== */
 @media (max-width: 480px) and (orientation: portrait) {
-    /* 竖屏空间紧张：画中画使用率低，隐藏让出空间 */
-    #pipBtn { display: none; }
-    /* 音量按钮在竖屏移动端意义有限（系统音量键更直接），收起 */
-    .gyp-volume { display: none; }
-    .gyp-btns { padding: 5px 6px; }
-    .gyp-btn { width: 40px; height: 40px; }
+    .gyp-btns { padding: 4px 5px; }
+    .gyp-btn { width: 38px; height: 38px; }
+    .gyp-danmaku-inline input,
+    .gyp-danmaku-inline button {
+        min-height: 28px;
+        font-size: 11px;
+    }
+    .gyp-danmaku-input { padding: 0 6px; }
+    .gyp-danmaku-send { padding: 0 6px; }
 }
 
 /* 底部抽屉上滑动画 */
@@ -1051,7 +1328,8 @@ export const styles = `
 /* 无障碍：用户偏好减少透明度 → 回退实色，关闭模糊 */
 @media (prefers-reduced-transparency: reduce) {
     .gyp-menu, .gyp-ep-panel, .gyp-hint, .gyp-resume,
-    .gyp-center-btn, .gyp-lock, .gyp-progress-tip, .gyp-vslide {
+    .gyp-center-btn, .gyp-lock, .gyp-progress-tip, .gyp-vslide,
+    .gyp-danmaku-send {
         background: var(--gyp-glass-bg-solid) !important;
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;

@@ -1,7 +1,7 @@
 {
   "name": "gy-player",
   "version": "1.0.0",
-  "description": "极致轻量的自研 Web 播放器（HLS/CMAF），零框架 Web Component，部署到 Cloudflare Workers Static Assets",
+  "description": "极致轻量的自研 Web 播放器（HLS/CMAF），零框架 Web Component，发布到 R2 CDN",
   "type": "module",
   "main": "dist/gy-player.js",
   "module": "dist/gy-player.js",
@@ -9,11 +9,13 @@
     ".": "./dist/gy-player.js"
   },
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "npm run build && python3 -m http.server 8788",
+    "demo": "npm run build && node demo/demo-server.mjs",
     "build": "node build.js",
     "test": "node test/logic.test.mjs && node test/resume.test.mjs && node test/fallback.test.mjs && node test/progress.test.mjs",
     "test:browser": "node test/browser-check.mjs && node test/feature-check.mjs && node test/integration-check.mjs && node test/mobile-check.mjs",
-    "deploy": "wrangler deploy"
+    "publish": "bash scripts/publish-r2.sh",
+    "deploy": "npm run build && npm run publish"
   },
   "keywords": [
     "video",
@@ -21,7 +23,7 @@
     "hls",
     "cmaf",
     "web-component",
-    "cloudflare"
+    "cdn"
   ],
   "license": "MIT",
   "devDependencies": {

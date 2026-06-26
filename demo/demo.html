@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>GY Player 线上片源预览</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        }
+        gy-player {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .demo-panel {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            right: 12px;
+            z-index: 9999;
+            display: grid;
+            gap: 8px;
+            max-width: 520px;
+            padding: 12px;
+            border-radius: 14px;
+            background: rgba(0, 0, 0, 0.72);
+            backdrop-filter: blur(12px);
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        .demo-panel.hidden { display: none; }
+        .demo-panel input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(255,255,255,0.08);
+            color: #fff;
+        }
+        .demo-panel button {
+            padding: 8px 12px;
+            border: 0;
+            border-radius: 10px;
+            background: #0a84ff;
+            color: #fff;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .demo-panel .status { opacity: 0.88; white-space: pre-wrap; }
+        .demo-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+    <div class="demo-panel" id="panel">
+        <div><strong>本地播放器 · 线上片源</strong></div>
+        <div class="status" id="status">准备登录 guangying.org …</div>
+        <label>邮箱<input id="email" type="email" value="admin@guangying.org" autocomplete="username"></label>
+        <label>密码<input id="password" type="password" value="admin123456" autocomplete="current-password"></label>
+        <div class="row">
+            <button id="startBtn" type="button">播放 S1E1</button>
+            <button id="startE2Btn" type="button">播放 S1E2</button>
+            <button id="hideBtn" type="button">隐藏面板</button>
+        </div>
+    </div>
+    <gy-player id="player"></gy-player>
+    <script type="module">
+        const params = new URLSearchParams(location.search);
+        const playerUrl = params.has('cdn')
+            ? 'https://cdn.guangying.org/static/player/gy-player.js?v=128'
+            : new URL('../dist/gy-player.js', import.meta.url).href;
+        await import(playerUrl);
+
+        const API_ORIGIN = window.location.origin;
+        const SERIES_TMDB = 289147;
+        const SERIES_TITLE = '灵魂摆渡·十年';
+
+        const panel = document.getElementById('panel');
+        const statusEl = document.getElementById('status');
+        const player = document.getElementById('player');
+
+        function setStatus(text) {
+            statusEl.textContent = text;
+        }
+
+        function absUrl(path) {
+            if (!path) return '';
+            if (/^https?:\/\//i.test(path)) return path;
+            return `${API_ORIGIN}${path.startsWith('/') ? path : `/${path}`}`;
+        }
+
+        async function apiFetch(path, options = {}) {
+            const res = await fetch(path, {
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+                ...options,
+            });
+            const text = await res.text();
+            const data = text ? JSON.parse(text) : null;
+            return { res, data };
+        }
+
+        async function signIn(email, password) {
+            const { res, data } = await apiFetch('/api/auth/sign-in/email', {
+                method: 'POST',
+                body: JSON.stringify({ email, password }),
+            });
+            if (!res.ok || !data?.user) {
+                throw new Error(data?.message || `登录失败 (${res.status})`);
+            }
+        }
+
+        async function fetchEpisodeMeta(season, episode) {
+            const { res, data } = await apiFetch(`/api/v1/3/tv/${SERIES_TMDB}?append_to_response=credits,images`);
+            if (!res.ok) throw new Error(`详情加载失败 (${res.status})`);
+            const episodes = data?.guangying?.episodes || [];
+            const ep = episodes.find((item) => item.season_number === season && item.episode_number === episode);
+            return {
+                videoId: `tmdb:tv:${SERIES_TMDB}:${season}:${episode}`,
+                episodeName: ep?.name || `第 ${episode} 集`,
+            };
+        }
+
+        async function fetchStream(videoId) {
+            const path = `/api/v1/me/stream/series/${encodeURIComponent(videoId)}.json`;
+            const { res, data } = await apiFetch(path);
+            if (res.status === 401) throw new Error('未登录或会话失效');
+            if (res.status === 403) throw new Error(data?.message || '无播放权限');
+            if (!res.ok) throw new Error(`取流失败 (${res.status})`);
+            const streams = data?.streams || [];
+            if (!streams.length) throw new Error('该集暂无播放源');
+            return streams[0];
+        }
+
+        async function fetchSubtitles(season, episode, streamSubs = []) {
+            const mapOne = (sub, index) => ({
+                url: absUrl(sub.url),
+                lang: sub.lang || 'und',
+                label: sub.name || sub.label || `字幕 ${index + 1}`,
+            });
+            let subs = streamSubs.length
+                ? streamSubs.map(mapOne)
+                : [];
+            if (!subs.length) {
+                const res = await fetch(`/api/r2/tmdb/tv/${SERIES_TMDB}/season/${season}/episode/${episode}/subtitles.json`);
+                if (res.ok) {
+                    const data = await res.json();
+                    subs = (Array.isArray(data) ? data : []).map(mapOne);
+                }
+            }
+            const simplifiedIndex = subs.findIndex((sub) => {
+                const lang = String(sub.lang || '').toLowerCase();
+                const label = String(sub.label || '').toLowerCase();
+                if (['zht', 'cht', 'yue', 'can'].includes(lang) || lang.includes('hant')) return false;
+                if (['zhs', 'chi', 'zho', 'cmn', 'zh'].includes(lang) || lang.startsWith('zh-hans') || lang.startsWith('zh-cn')) return true;
+                return label.includes('简体') || label.includes('中文');
+            });
+            return subs.map((sub, index) => ({
+                ...sub,
+                default: simplifiedIndex >= 0 ? index === simplifiedIndex : false,
+            }));
+        }
+
+        async function playEpisode(season, episode) {
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            setStatus(`登录中… S${season}E${episode}`);
+            await signIn(email, password);
+
+            setStatus(`加载元数据… S${season}E${episode}`);
+            const meta = await fetchEpisodeMeta(season, episode);
+
+            setStatus(`获取播放地址… ${meta.videoId}`);
+            const source = await fetchStream(meta.videoId);
+            const subtitles = await fetchSubtitles(season, episode, source.subtitles || []);
+
+            const title = `${SERIES_TITLE} · S${season}E${episode} · ${meta.episodeName}`;
+            const sourceLabel = params.has('cdn') ? 'CDN' : 'dist';
+            setStatus(`开始播放\n${title}\n字幕 ${subtitles.length} 条 · ${sourceLabel} gy-player.js`);
+
+            player.loadStream(absUrl(source.url), {
+                title,
+                videoId: meta.videoId,
+                playAfterLoad: true,
+                disableStorage: true,
+                subtitles,
+                danmaku: { videoId: meta.videoId, apiBase: '/api/v1' },
+            });
+        }
+
+        document.getElementById('startBtn').addEventListener('click', () => {
+            playEpisode(1, 1).catch((err) => setStatus(`失败：${err.message}`));
+        });
+        document.getElementById('startE2Btn').addEventListener('click', () => {
+            playEpisode(1, 2).catch((err) => setStatus(`失败：${err.message}`));
+        });
+        document.getElementById('hideBtn').addEventListener('click', () => {
+            panel.classList.add('hidden');
+        });
+
+        playEpisode(1, 1).catch((err) => setStatus(`失败：${err.message}\n可修改账号后点「播放 S1E1」重试`));
+    </script>
+</body>
+</html>

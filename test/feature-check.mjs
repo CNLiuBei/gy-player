@@ -65,7 +65,7 @@ async function evalJs(client, expression) {
 async function main() {
     const client = await cdp(await getWsUrl());
     await client.send('Runtime.enable');
-    await sleep(5000); // 等 hls.js 加载 + manifest 解析
+    await sleep(10000); // 等 Shaka Player 加载 + manifest 解析
 
     const P = `document.getElementById('player')`;
 
@@ -95,6 +95,21 @@ async function main() {
         } catch { return false; }
     })()`);
 
+    // 外部多清晰度源优先进入清晰度菜单，并正确高亮当前源
+    const externalSourceMenuOk = await evalJs(client, `(() => {
+        try {
+            const p = ${P};
+            p._qualitySources = [
+                { url: 'https://cdn.example.test/720.m3u8', quality: '720p' },
+                { url: 'https://cdn.example.test/1080.m3u8', quality: '1080p' },
+            ];
+            p._activeSourceUrl = 'https://cdn.example.test/1080.m3u8';
+            const html = p._buildMenu('quality');
+            p._qualitySources = [];
+            return html.includes('清晰度') && html.includes('data-source="1"') && html.includes('1080p');
+        } catch { return false; }
+    })()`);
+
     // toggleControls 存在且可调用
     const toggleControlsOk = await evalJs(client, `(() => {
         try { ${P}.toggleControls(); ${P}.toggleControls(); return true; } catch { return false; }
@@ -103,7 +118,7 @@ async function main() {
     // _saveProgress 存在
     const saveProgressOk = await evalJs(client, `typeof ${P}._saveProgress === 'function'`);
 
-    // 设置画质不抛异常，等异步切换稳定后验证（hls.js 切档为异步）
+    // 设置画质不抛异常，等异步切换稳定后验证（Shaka 切档为异步）
     const setQualityOk = await evalJs(client, `(async () => {
         try {
             const e = ${P}.engine;
@@ -111,7 +126,7 @@ async function main() {
             if (lvls.length === 0) return false;
             const target = lvls[0].index;
             e.setLevel(target);
-            // hls.js 异步加载目标分片后才更新 currentLevel，需等待足够时间稳定
+            // Shaka 异步加载目标分片后才更新 currentLevel，需等待足够时间稳定
             await new Promise((r) => setTimeout(r, 3000));
             const fixed = e.getCurrentLevel();
             e.setLevel(-1);
@@ -156,6 +171,7 @@ async function main() {
         ['多音轨 API 正常', audioApiOk === true],
         ['画质菜单构建正常', qualityMenuOk === true],
         ['字幕菜单构建正常', subMenuOk === true],
+        ['外部清晰度源菜单正常', externalSourceMenuOk === true],
         ['toggleControls 可用', toggleControlsOk === true],
         ['_saveProgress 存在', saveProgressOk === true],
         ['画质切换与恢复自动', setQualityOk === true],

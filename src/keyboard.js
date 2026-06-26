@@ -76,7 +76,7 @@ export function bindKeyboard(player, signal) {
             case 'Escape':
                 if (player._menuOpen) {
                     player.closeMenu();
-                } else if (document.fullscreenElement || document.webkitFullscreenElement) {
+                } else if (player._isInFullscreen?.()) {
                     player.toggleFullscreen();
                 } else {
                     player.dispatchEvent(new CustomEvent('back'));

@@ -129,6 +129,84 @@ export function getRate() {
 }
 
 /**
+ * 保存用户偏好的清晰度/播放源标签
+ * @param {{kind:string,value:string,label?:string}} pref 偏好
+ */
+export function saveQualityPreference(pref) {
+    if (!pref || !pref.kind || !pref.value) return;
+    safeSet('quality_pref', JSON.stringify({
+        kind: String(pref.kind),
+        value: String(pref.value),
+        label: pref.label ? String(pref.label) : '',
+    }));
+}
+
+/**
+ * 读取用户偏好的清晰度/播放源标签
+ * @returns {{kind:string,value:string,label:string}|null}
+ */
+export function getQualityPreference() {
+    try {
+        const val = safeGet('quality_pref');
+        return val ? JSON.parse(val) : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 保存字幕偏好。idx=-1 表示关闭字幕。
+ * @param {{off?:boolean,lang?:string,label?:string}} pref 偏好
+ */
+export function saveSubtitlePreference(pref) {
+    if (!pref) return;
+    safeSet('subtitle_pref', JSON.stringify({
+        off: pref.off === true,
+        lang: pref.lang ? String(pref.lang) : '',
+        label: pref.label ? String(pref.label) : '',
+    }));
+}
+
+/**
+ * 读取字幕偏好
+ * @returns {{off:boolean,lang:string,label:string}|null}
+ */
+export function getSubtitlePreference() {
+    try {
+        const val = safeGet('subtitle_pref');
+        return val ? JSON.parse(val) : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 保存音轨偏好
+ * @param {{id?:number,lang?:string,name?:string}} pref 偏好
+ */
+export function saveAudioPreference(pref) {
+    if (!pref) return;
+    safeSet('audio_pref', JSON.stringify({
+        id: Number.isFinite(Number(pref.id)) ? Number(pref.id) : -1,
+        lang: pref.lang ? String(pref.lang) : '',
+        name: pref.name ? String(pref.name) : '',
+    }));
+}
+
+/**
+ * 读取音轨偏好
+ * @returns {{id:number,lang:string,name:string}|null}
+ */
+export function getAudioPreference() {
+    try {
+        const val = safeGet('audio_pref');
+        return val ? JSON.parse(val) : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * 标记移动端手势引导已展示（只展示一次）
  */
 export function markGestureGuideSeen() {
@@ -141,4 +219,15 @@ export function markGestureGuideSeen() {
  */
 export function getGestureGuideSeen() {
     return safeGet('gesture_guide_seen') === '1';
+}
+
+/** 保存弹幕开关偏好 */
+export function saveDanmakuEnabled(enabled) {
+    safeSet('danmaku_enabled', enabled ? '1' : '0');
+}
+
+/** 读取弹幕开关偏好（默认开启） */
+export function getDanmakuEnabled() {
+    const val = safeGet('danmaku_enabled');
+    return val === null ? true : val === '1';
 }

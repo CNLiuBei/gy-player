@@ -91,15 +91,15 @@ async function main() {
     await client.send('Runtime.enable');
     await client.send('Page.enable');
 
-    // 等待组件定义与首帧加载（冷启动含 hls.js CDN 拉取，留足时间）
-    await sleep(4000);
+    // 等待组件定义与首帧加载（冷启动含 Shaka Player CDN 拉取，留足时间）
+    await sleep(10000);
 
     // 检查 1：自定义元素已注册
     const defined = await evaluate(client, `!!customElements.get('gy-player')`);
     // 检查 2：shadowRoot 已渲染 video
     const hasVideo = await evaluate(client, `!!document.getElementById('player')?.shadowRoot?.getElementById('video')`);
-    // 检查 3：引擎类型（native / hls.js）
-    const engineKind = await evaluate(client, `(() => { const p = document.getElementById('player'); return p?.engine ? (p.engine.native ? 'native' : 'hls.js') : 'none'; })()`);
+    // 检查 3：引擎类型（native / shaka）
+    const engineKind = await evaluate(client, `(() => { const p = document.getElementById('player'); const e = p?.engine; return e ? (e.native ? 'native' : (e.shaka ? 'shaka' : 'unknown')) : 'none'; })()`);
 
     // 等待真实播放推进
     await sleep(4000);
@@ -118,7 +118,7 @@ async function main() {
     const results = [
         ['自定义元素已注册', defined === true],
         ['Shadow DOM 渲染 video', hasVideo === true],
-        ['引擎已选择 (' + engineKind + ')', engineKind === 'hls.js' || engineKind === 'native'],
+        ['引擎已选择 (' + engineKind + ')', engineKind === 'shaka' || engineKind === 'native'],
         ['解析到画质档位 (' + levels + ')', levels > 0],
         ['获取到视频时长 (' + duration.toFixed(1) + 's)', duration > 0],
         ['readyState >= 2 (' + readyState + ')', readyState >= 2],

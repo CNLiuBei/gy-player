@@ -7,7 +7,16 @@
 
 ## 1. 引入
 
-### CDN / 本地（ES 模块，推荐）
+### 生产环境（CDN）
+
+```html
+<gy-player id="player"></gy-player>
+<script type="module">
+  await import('https://cdn.guangying.org/static/player/gy-player.js?v=128');
+</script>
+```
+
+### 本地构建产物（ES 模块）
 
 ```html
 <gy-player id="player"></gy-player>
@@ -60,6 +69,11 @@ player.loadStream('https://cdn.example.com/movie.m3u8', {
         { url: '/subs/zhs.vtt', lang: 'zhs', label: '简体中文', default: true },
         { url: '/subs/eng.vtt', lang: 'eng', label: 'English' },
     ],
+    sources: [
+        { url: 'https://cdn.example.com/movie-720p.m3u8', quality: '720p' },
+        { url: 'https://cdn.example.com/movie-1080p.m3u8', quality: '1080p' },
+    ],
+    sourceUrl: 'https://cdn.example.com/movie-1080p.m3u8',
 });
 ```
 
@@ -73,6 +87,9 @@ player.loadStream('https://cdn.example.com/movie.m3u8', {
 | `startTime` | number | — | 起播秒数。传入则直接续播、不弹提示（用于跨设备续播） |
 | `disableStorage` | boolean | false | true 时关闭内置 localStorage，进度交由前端管理 |
 | `subtitles` | Array | `[]` | 外挂字幕，见下方格式 |
+| `sources` | Array | `[]` | 同一视频的多播放源/清晰度列表，见下方格式 |
+| `sourceUrl` | string | 当前 url | 当前播放源 url，用于清晰度菜单高亮 |
+| `playAfterLoad` | boolean | false | 加载完成后立即播放，通常用于切换清晰度后恢复播放 |
 
 **字幕对象格式：**
 
@@ -82,6 +99,18 @@ player.loadStream('https://cdn.example.com/movie.m3u8', {
 | `lang` | string | 语言代码，如 `zhs` / `eng` |
 | `label` | string | 显示名，如「简体中文」 |
 | `default` | boolean | 是否默认选中 |
+
+**播放源对象格式：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `url` | string | 视频地址（`.m3u8` 或 `.mp4`） |
+| `quality` | string | 清晰度显示名，如 `720p` / `1080p` / `4K` |
+| `label` | string | 备用显示名，如「原画」「备用线路」 |
+| `subtitles` | Array | 可选。该源专属字幕；不传则沿用当前 `subtitles` |
+
+传入多条 `sources` 后，底部「画质」按钮会显示为清晰度切换菜单。切换时播放器会保留
+当前播放秒数，若切换前正在播放，会在新源就绪后继续播放。
 
 ### 播放控制
 

@@ -1,26 +1,35 @@
-// 播放引擎层 — HLS 加载与画质/音轨/字幕抽象
+// 播放引擎层 — HLS/DASH 加载与画质/音轨/字幕抽象
 //
 // 体积策略：
-//   - Safari / iOS 原生支持 HLS → 直接 video.src，零依赖，不加载 hls.js
-//   - 其他浏览器 → 仅在真正播放时动态 import hls.js（按需加载，不进首屏）
+//   - MP4 等渐进式直链 → 直接 video.src，零依赖
+//   - HLS / DASH → 仅在真正播放时动态加载 Shaka Player（按需加载，不进首屏）
 //
-// 对外暴露统一接口，让 UI 层不关心底层用的是原生还是 hls.js。
+// 对外暴露统一接口，让 UI 层不关心底层用的是原生还是 Shaka。
 
-import { nativeHlsSupported } from './utils.js';
+import { bufferedAheadSeconds, nativeHlsSupported } from './utils.js';
+
+// 首屏至少预缓冲这么多秒再通知 UI「可播放」（避免只缓冲 1 个分片就起播）
+const MIN_READY_BUFFER_SECONDS = 4;
+const READY_FALLBACK_MS = 12000;
+
+// 向前缓冲目标（与旧 hls.js 策略对齐）
+const TARGET_BUFFER_SECONDS = 60;
+const REBUFFER_GOAL_SECONDS = 4;
+const BUFFER_BEHIND_SECONDS = 15;
 
 // 错误恢复上限，超限即上报致命，避免无限重试死循环
 const MAX_NETWORK_RETRIES = 6;
 const MAX_MEDIA_RETRIES = 3;
 
-// hls.js CDN 地址列表（按顺序降级；可被 window.GYP_HLS_URL 覆盖为自托管地址）
-const HLS_VERSION = '1.6.16';
-const HLS_CDNS = [
-    `https://cdn.jsdelivr.net/npm/hls.js@${HLS_VERSION}/dist/hls.min.js`,
-    `https://unpkg.com/hls.js@${HLS_VERSION}/dist/hls.min.js`,
-    `https://fastly.jsdelivr.net/npm/hls.js@${HLS_VERSION}/dist/hls.min.js`,
+// Shaka Player CDN 地址列表（按顺序降级；可被 window.GYP_SHAKA_URL / GYP_HLS_URL 覆盖）
+const SHAKA_VERSION = '4.16.37';
+const SHAKA_CDNS = [
+    `https://cdn.jsdelivr.net/npm/shaka-player@${SHAKA_VERSION}/dist/shaka-player.compiled.js`,
+    `https://unpkg.com/shaka-player@${SHAKA_VERSION}/dist/shaka-player.compiled.js`,
+    `https://fastly.jsdelivr.net/npm/shaka-player@${SHAKA_VERSION}/dist/shaka-player.compiled.js`,
 ];
 
-let hlsModulePromise = null;
+let shakaModulePromise = null;
 
 /**
  * 注入单个脚本
@@ -42,38 +51,45 @@ function injectScript(url) {
 }
 
 /**
- * 按需加载 hls.js（全局单例，多个播放器实例共享同一次加载）
- * 优先使用已存在的 window.Hls；否则依次尝试多个 CDN，全部失败才报错。
- * @returns {Promise<any>} hls.js 的 Hls 构造器
+ * 按需加载 Shaka Player（全局单例，多个播放器实例共享同一次加载）
+ * @returns {Promise<typeof shaka>}
  */
-function loadHlsJs() {
-    if (window.Hls) return Promise.resolve(window.Hls);
-    if (hlsModulePromise) return hlsModulePromise;
+function loadShakaPlayer() {
+    if (window.shaka) return Promise.resolve(window.shaka);
+    if (shakaModulePromise) return shakaModulePromise;
 
-    const sources = window.GYP_HLS_URL ? [window.GYP_HLS_URL] : HLS_CDNS;
+    const override = window.GYP_SHAKA_URL || window.GYP_HLS_URL;
+    const sources = override ? [override] : SHAKA_CDNS;
 
-    hlsModulePromise = (async () => {
+    shakaModulePromise = (async () => {
         let lastErr = null;
         for (const url of sources) {
             try {
                 await injectScript(url);
-                if (window.Hls) return window.Hls;
-                lastErr = new Error('hls.js 已加载但未挂载到 window.Hls：' + url);
+                if (window.shaka) {
+                    window.shaka.polyfill.installAll();
+                    return window.shaka;
+                }
+                lastErr = new Error('Shaka Player 已加载但未挂载到 window.shaka：' + url);
             } catch (err) {
                 lastErr = err;
-                // 继续尝试下一个 CDN
             }
         }
-        // 全部失败：重置缓存，允许下次重试
-        hlsModulePromise = null;
-        throw lastErr || new Error('hls.js 加载失败：所有 CDN 均不可用');
+        shakaModulePromise = null;
+        throw lastErr || new Error('Shaka Player 加载失败：所有 CDN 均不可用');
     })();
 
-    return hlsModulePromise;
+    return shakaModulePromise;
+}
+
+function isStreamingUrl(url) {
+    return /\.m3u8(\?|$)/i.test(url) ||
+        /\.mpd(\?|$)/i.test(url) ||
+        /application\/(vnd\.apple\.mpegurl|x-mpegURL|dash\+xml)/i.test(url);
 }
 
 /**
- * 播放引擎：封装原生 HLS 与 hls.js 两种后端
+ * 播放引擎：封装原生直链与 Shaka Player 两种后端
  *
  * 事件回调（构造时传入 callbacks）：
  *   onReady()                 引擎就绪，可读取画质列表
@@ -89,127 +105,298 @@ export class PlaybackEngine {
         this.video = video;
         this.callbacks = callbacks;
         this.options = options;
-        this.hls = null;          // hls.js 实例（原生模式下为 null）
-        this.native = false;      // 是否走原生 HLS
+        this.shaka = null;
+        this.native = false;
         this._destroyed = false;
-        this._netRetries = 0;     // 网络错误恢复计数
-        this._mediaRetries = 0;   // 媒体错误恢复计数
+        this._netRetries = 0;
+        this._mediaRetries = 0;
+        this._abrEnabled = true;
+        this._shakaGlobal = null;
+        this._hlsCompat = this._createHlsCompat();
+    }
+
+    /** gy-player 仍通过 engine.hls.subtitleTrack 禁用内嵌字幕，保留兼容层 */
+    get hls() {
+        return this._hlsCompat;
+    }
+
+    _createHlsCompat() {
+        const engine = this;
+        return {
+            get subtitleTracks() {
+                if (!engine.shaka) return [];
+                try {
+                    return engine.shaka.getTextTracks() || [];
+                } catch {
+                    return [];
+                }
+            },
+            set subtitleTrack(idx) {
+                if (!engine.shaka) return;
+                try {
+                    if (idx === -1) engine.shaka.setTextTrackVisibility(false);
+                } catch { /* ignore */ }
+            },
+        };
     }
 
     /**
-     * 加载并附加一个 HLS 源
-     * @param {string} url m3u8 地址
+     * 加载并附加一个流媒体或直链源
+     * @param {string} url 播放地址
      * @returns {Promise<void>}
      */
-    async load(url) {
+    async load(url, options = {}) {
         await this.detach();
         this._destroyed = false;
         this._url = url;
         this._fallbackTried = false;
+        this._nativeFallbackTried = false;
+        this._startPosition = typeof options.startPosition === 'number' && options.startPosition > 0
+            ? options.startPosition
+            : 0;
+        clearTimeout(this._readyFallbackTimer);
 
-        const isHls = /\.m3u8(\?|$)/i.test(url) ||
-            /application\/(vnd\.apple\.mpegurl|x-mpegURL)/i.test(url);
-        this._isHls = isHls;
+        this._isStream = isStreamingUrl(url);
 
-        // 非 HLS（如 MP4 直链）或原生支持 HLS → 优先走原生 video
-        if (!isHls || nativeHlsSupported()) {
+        if (!this._isStream) {
             this._loadNative(url);
             return;
         }
-        // 其他浏览器：走 hls.js
-        await this._loadHls(url);
+
+        await this._loadShaka(url);
     }
 
-    /** 原生 video 播放路径（Safari/iOS HLS，或 MP4 直链） */
+    /** 原生 video 播放路径（MP4 直链，或 Shaka 不可用时的 HLS 兜底） */
     _loadNative(url) {
         this.native = true;
         this.video.src = url;
-        const onMeta = () => {
+        const startPos = this._startPosition || 0;
+        this.video.addEventListener('loadedmetadata', () => {
             if (this._destroyed) return;
-            this.callbacks.onReady?.();
-        };
-        this.video.addEventListener('loadedmetadata', onMeta, { once: true });
+            if (startPos > 0) this.video.currentTime = startPos;
+        }, { once: true });
+        this.video.addEventListener('canplay', () => {
+            if (this._destroyed) return;
+            this._emitReadyOnce();
+        }, { once: true });
         this.video.addEventListener('error', this._onNativeError, { once: true });
+        this._readyFallbackTimer = setTimeout(() => this._emitReadyOnce(), READY_FALLBACK_MS);
     }
 
-    /** hls.js（MSE）播放路径 */
-    async _loadHls(url) {
-        let Hls;
+    _emitReadyOnce() {
+        if (this._readyEmitted || this._destroyed) return;
+        this._readyEmitted = true;
+        clearTimeout(this._readyFallbackTimer);
+        this.callbacks.onReady?.();
+    }
+
+    _maybeEmitReadyFromBuffer() {
+        if (this._readyEmitted || this._destroyed) return;
+        const ahead = bufferedAheadSeconds(this.video);
+        if (ahead >= MIN_READY_BUFFER_SECONDS) {
+            this._emitReadyOnce();
+        }
+    }
+
+    _buildShakaConfig() {
+        const preferHDR = this.options.preferHDR === true;
+        const allowedVideoRanges = this.options.allowedVideoRanges || ['SDR', 'PQ', 'HLG'];
+        const config = {
+            streaming: {
+                bufferingGoal: TARGET_BUFFER_SECONDS,
+                rebufferingGoal: REBUFFER_GOAL_SECONDS,
+                bufferBehind: BUFFER_BEHIND_SECONDS,
+            },
+            abr: { enabled: true },
+            manifest: {
+                hls: { useSafariBehaviorForLive: true },
+            },
+        };
+        if (preferHDR) {
+            config.preferredVideoCodecs = ['hev1', 'hvc1', 'dvh1', 'dvhe', 'avc1'];
+        } else {
+            config.preferredVideoCodecs = ['avc1', 'hev1', 'hvc1'];
+        }
+        if (Array.isArray(allowedVideoRanges) && allowedVideoRanges.length > 0 && !allowedVideoRanges.includes('SDR')) {
+            config.preferredVideoCodecs = ['hev1', 'hvc1', 'dvh1', 'dvhe', ...(config.preferredVideoCodecs || [])];
+        }
+        return config;
+    }
+
+    /** Shaka Player（HLS/DASH）播放路径 */
+    async _loadShaka(url) {
+        let shaka;
         try {
-            Hls = await loadHlsJs();
+            shaka = await loadShakaPlayer();
         } catch (err) {
+            if (this._isStream && nativeHlsSupported()) {
+                this._loadNative(url);
+                return;
+            }
             this.callbacks.onError?.(err, true);
             return;
         }
         if (this._destroyed) return;
+        this._shakaGlobal = shaka;
 
-        if (!Hls.isSupported()) {
-            // 既不支持 MSE 又走到这里：兜底交给原生
-            this._loadNative(url);
+        if (!shaka.Player.isBrowserSupported()) {
+            if (nativeHlsSupported()) {
+                this._loadNative(url);
+                return;
+            }
+            this.callbacks.onError?.(new Error('浏览器不支持 Shaka Player'), true);
             return;
         }
 
         this.native = false;
-        this.hls = new Hls({
-            maxBufferLength: 30,
-            maxMaxBufferLength: 120,
-            backBufferLength: 30,
-            abrEwmaDefaultEstimate: 5_000_000,
-            fragLoadingMaxRetry: 6,
-            manifestLoadingMaxRetry: 4,
-            levelLoadingMaxRetry: 4,
-            lowLatencyMode: false,
-            // HDR 在浏览器/MSE 下兼容性不稳定；有 SDR 轨道时默认优先 SDR，避免偏色。
-            // 如果业务确认终端支持 HDR，可在 loadStream(url, { preferHDR: true }) 中开启优先 HDR。
-            videoPreference: {
-                preferHDR: this.options.preferHDR === true,
-                allowedVideoRanges: this.options.allowedVideoRanges || ['SDR', 'PQ', 'HLG'],
-            },
-        });
-        this._Hls = Hls;
+        this._readyEmitted = false;
+        this._abrEnabled = true;
 
-        this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        try {
+            this.shaka = new shaka.Player();
+            await this.shaka.attach(this.video);
+            this.shaka.configure(this._buildShakaConfig());
+            this.shaka.addEventListener('error', this._onShakaError);
+            this.shaka.addEventListener('buffering', this._onShakaBuffering);
+            this.shaka.addEventListener('adaptation', this._onShakaAdaptation);
+
+            await this.shaka.load(url, this._startPosition || 0);
             if (this._destroyed) return;
-            this.callbacks.onReady?.();
-        });
-        // 分片成功缓冲 → 网络/媒体已恢复，重置重试计数
-        this.hls.on(Hls.Events.FRAG_BUFFERED, () => {
+
+            try { this.shaka.setTextTrackVisibility(false); } catch { /* ignore */ }
             this._netRetries = 0;
             this._mediaRetries = 0;
-        });
-        this.hls.on(Hls.Events.LEVEL_SWITCHED, (_evt, data) => {
+            this._maybeEmitReadyFromBuffer();
+            this._readyFallbackTimer = setTimeout(() => this._emitReadyOnce(), READY_FALLBACK_MS);
+        } catch (err) {
             if (this._destroyed) return;
-            this.callbacks.onLevelSwitched?.(data.level);
-        });
-        this.hls.on(Hls.Events.ERROR, (_evt, data) => {
-            if (this._destroyed) return;
-            this._handleHlsError(data);
-        });
-
-        this.hls.loadSource(url);
-        this.hls.attachMedia(this.video);
+            await this._fallbackFromShakaFailure(url, err);
+        }
     }
+
+    async _fallbackFromShakaFailure(url, err) {
+        if (this._isStream && nativeHlsSupported() && !this._nativeFallbackTried) {
+            this._nativeFallbackTried = true;
+            try {
+                if (this.shaka) {
+                    await this.shaka.destroy();
+                    this.shaka = null;
+                }
+            } catch { /* ignore */ }
+            this._loadNative(url);
+            return;
+        }
+        this.callbacks.onError?.(this._normalizeShakaError(err), true);
+    }
+
+    _onShakaBuffering = (event) => {
+        if (this._destroyed) return;
+        if (!event.buffering) {
+            this._netRetries = 0;
+            this._mediaRetries = 0;
+            this._maybeEmitReadyFromBuffer();
+        }
+    };
+
+    _onShakaAdaptation = () => {
+        if (this._destroyed) return;
+        this.callbacks.onLevelSwitched?.(this.getCurrentLevel());
+    };
+
+    _normalizeShakaError(error) {
+        const shaka = this._shakaGlobal;
+        const category = error?.category;
+        if (shaka?.util?.Error?.Category) {
+            if (category === shaka.util.Error.Category.NETWORK) {
+                return { type: 'networkError', message: error.message, code: error.code };
+            }
+            if (category === shaka.util.Error.Category.MEDIA) {
+                return { type: 'mediaError', message: error.message, code: error.code };
+            }
+        }
+        if (error?.code === 2) return { type: 'networkError', code: 2, message: error.message };
+        if (error?.code === 3) return { type: 'mediaError', code: 3, message: error.message };
+        return error || { message: '播放出错' };
+    }
+
+    _isShakaFatal(error) {
+        const shaka = this._shakaGlobal;
+        if (!error || !shaka?.util?.Error?.Severity) return true;
+        return error.severity === shaka.util.Error.Severity.CRITICAL;
+    }
+
+    _onShakaError = (event) => {
+        if (this._destroyed) return;
+        const error = event.detail;
+        const shaka = this._shakaGlobal;
+        const fatal = this._isShakaFatal(error);
+        const normalized = this._normalizeShakaError(error);
+
+        if (!fatal) {
+            this.callbacks.onError?.(normalized, false);
+            return;
+        }
+
+        if (shaka && error?.category === shaka.util.Error.Category.NETWORK) {
+            if (this._netRetries < MAX_NETWORK_RETRIES) {
+                this._netRetries++;
+                const delay = Math.min(1000 * this._netRetries, 5000);
+                const resumeAt = this.video?.currentTime || 0;
+                this._retryTimer = setTimeout(async () => {
+                    if (this._destroyed || !this.shaka) return;
+                    try {
+                        await this.shaka.load(this._url, resumeAt);
+                    } catch (retryErr) {
+                        if (!this._destroyed) {
+                            this.callbacks.onError?.(this._normalizeShakaError(retryErr), true);
+                        }
+                    }
+                }, delay);
+                this.callbacks.onError?.(normalized, false);
+                return;
+            }
+        }
+
+        if (shaka && error?.category === shaka.util.Error.Category.MEDIA) {
+            if (this._mediaRetries < MAX_MEDIA_RETRIES) {
+                this._mediaRetries++;
+                const resumeAt = this.video?.currentTime || 0;
+                this._retryTimer = setTimeout(async () => {
+                    if (this._destroyed || !this.shaka) return;
+                    try {
+                        await this.shaka.load(this._url, resumeAt);
+                    } catch (retryErr) {
+                        if (!this._destroyed) {
+                            this.callbacks.onError?.(this._normalizeShakaError(retryErr), true);
+                        }
+                    }
+                }, 500);
+                this.callbacks.onError?.(normalized, false);
+                return;
+            }
+        }
+
+        this.callbacks.onError?.(normalized, true);
+    };
 
     /**
      * 原生模式错误处理。
      * Safari 原生对部分 fMP4/CMAF 流解码会失败（MEDIA_ERR_DECODE），
-     * 此时若是 HLS 且 MSE 可用，自动回退到 hls.js（关键兼容性保障）。
+     * 此时自动回退到 Shaka Player（关键兼容性保障）。
      */
     _onNativeError = async () => {
         if (this._destroyed) return;
         const err = this.video.error;
 
-        // 原生 HLS 失败 → 尝试回退 hls.js（仅一次）
-        if (this.native && this._isHls && !this._fallbackTried) {
+        if (this.native && this._isStream && !this._fallbackTried) {
             this._fallbackTried = true;
             try {
-                const Hls = await loadHlsJs();
+                const shaka = await loadShakaPlayer();
                 if (this._destroyed) return;
-                if (Hls.isSupported()) {
-                    // 清理原生 src 后用 hls.js 重新加载
+                if (shaka.Player.isBrowserSupported()) {
                     this.video.removeAttribute('src');
                     this.video.load();
-                    await this._loadHls(this._url);
+                    await this._loadShaka(this._url);
                     return;
                 }
             } catch { /* 回退失败，按原错误上报 */ }
@@ -219,43 +406,35 @@ export class PlaybackEngine {
     };
 
     /**
-     * hls.js 错误处理：网络/媒体错误带上限地自动恢复，超限或其他错误上报为致命
-     * @param {Object} data hls.js 错误数据
+     * 跳转到指定时间
+     * @param {number} seconds
      */
-    _handleHlsError(data) {
-        const Hls = this._Hls;
-        if (!data.fatal) {
-            // 非致命错误：交给 hls.js 自行恢复，不打扰用户
-            return;
+    seekTo(seconds) {
+        if (this._destroyed || !this.video) return;
+        const duration = Number.isFinite(this.video.duration) ? this.video.duration : seconds;
+        const target = Math.max(0, Math.min(seconds, duration || seconds));
+        this.video.currentTime = target;
+    }
+
+    _getVariantLevelList() {
+        if (!this.shaka) return [];
+        const variants = this.shaka.getVariantTracks().filter((track) => track.height > 0);
+        const byHeight = new Map();
+        for (const track of variants) {
+            const existing = byHeight.get(track.height);
+            if (!existing || (track.bandwidth || 0) > (existing.bandwidth || 0)) {
+                byHeight.set(track.height, track);
+            }
         }
-        switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-                if (this._netRetries < MAX_NETWORK_RETRIES) {
-                    this._netRetries++;
-                    // 指数退避后重新加载，避免瞬时网络抖动时疯狂重试
-                    const delay = Math.min(1000 * this._netRetries, 5000);
-                    this._retryTimer = setTimeout(() => {
-                        if (!this._destroyed && this.hls) this.hls.startLoad();
-                    }, delay);
-                    this.callbacks.onError?.(data, false);
-                } else {
-                    this.callbacks.onError?.(data, true); // 超过上限：上报致命
-                }
-                break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-                if (this._mediaRetries < MAX_MEDIA_RETRIES) {
-                    this._mediaRetries++;
-                    this.hls.recoverMediaError();
-                    this.callbacks.onError?.(data, false);
-                } else {
-                    this.callbacks.onError?.(data, true);
-                }
-                break;
-            default:
-                // 其他致命错误：无法恢复，上报
-                this.callbacks.onError?.(data, true);
-                break;
-        }
+        return Array.from(byHeight.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([height, track], index) => ({
+                index,
+                height,
+                bitrate: track.bandwidth || 0,
+                name: `${height}p`,
+                trackId: track.id,
+            }));
     }
 
     /**
@@ -263,13 +442,8 @@ export class PlaybackEngine {
      * @returns {Array<{index:number, height:number, bitrate:number, name:string}>}
      */
     getLevels() {
-        if (this.native || !this.hls) return [];
-        return this.hls.levels.map((lvl, index) => ({
-            index,
-            height: lvl.height || 0,
-            bitrate: lvl.bitrate || 0,
-            name: lvl.height ? `${lvl.height}p` : `${Math.round((lvl.bitrate || 0) / 1000)}k`,
-        }));
+        if (this.native || !this.shaka) return [];
+        return this._getVariantLevelList().map(({ trackId, ...rest }) => rest);
     }
 
     /**
@@ -277,8 +451,12 @@ export class PlaybackEngine {
      * @returns {number}
      */
     getCurrentLevel() {
-        if (this.native || !this.hls) return -1;
-        return this.hls.autoLevelEnabled ? -1 : this.hls.currentLevel;
+        if (this.native || !this.shaka) return -1;
+        if (this._abrEnabled) return -1;
+        const active = this.shaka.getVariantTracks().find((track) => track.active);
+        if (!active?.height) return -1;
+        const match = this._getVariantLevelList().find((level) => level.height === active.height);
+        return match ? match.index : -1;
     }
 
     /**
@@ -286,24 +464,37 @@ export class PlaybackEngine {
      * @param {number} index 画质索引，-1 表示自动（ABR）
      */
     setLevel(index) {
-        if (this.native || !this.hls) return;
-        this.hls.currentLevel = index; // -1 即恢复自动
+        if (this.native || !this.shaka) return;
+        if (index === -1) {
+            this.shaka.configure({ abr: { enabled: true } });
+            this._abrEnabled = true;
+            return;
+        }
+        const level = this._getVariantLevelList().find((item) => item.index === index);
+        if (!level) return;
+        this.shaka.configure({ abr: { enabled: false } });
+        this._abrEnabled = false;
+        const track = this.shaka.getVariantTracks().find((item) => item.id === level.trackId);
+        if (track) {
+            this.shaka.selectVariantTrack(track, true);
+            this.callbacks.onLevelSwitched?.(index);
+        }
     }
 
     /**
-     * 获取音轨列表（同时支持 hls.js 与 Safari 原生 video.audioTracks）
+     * 获取音轨列表
      * @returns {Array<{id:(number|string), name:string, lang:string}>}
      */
     getAudioTracks() {
-        // hls.js 模式
-        if (this.hls) {
-            return (this.hls.audioTracks || []).map((tr) => ({
-                id: tr.id,
-                name: tr.name || tr.lang || `音轨 ${tr.id + 1}`,
-                lang: tr.lang || '',
+        if (this.shaka) {
+            const items = this.shaka.getAudioLanguagesAndRoles() || [];
+            return items.map((item, index) => ({
+                id: index,
+                name: item.label || item.language || `音轨 ${index + 1}`,
+                lang: item.language || '',
+                role: item.role || '',
             }));
         }
-        // 原生模式（Safari/iOS）：读 video.audioTracks（AudioTrackList）
         const native = this.video.audioTracks;
         if (native && native.length > 1) {
             return Array.from(native).map((tr, i) => ({
@@ -317,7 +508,15 @@ export class PlaybackEngine {
 
     /** 获取当前音轨 id */
     getCurrentAudioTrack() {
-        if (this.hls) return this.hls.audioTrack;
+        if (this.shaka) {
+            const active = this.shaka.getVariantTracks().find((track) => track.active);
+            if (!active) return -1;
+            const tracks = this.getAudioTracks();
+            const index = tracks.findIndex((track) =>
+                track.lang === (active.language || '') &&
+                (track.role || '') === (active.audioRole || ''));
+            return index >= 0 ? index : -1;
+        }
         const native = this.video.audioTracks;
         if (native && native.length > 1) {
             for (let i = 0; i < native.length; i++) {
@@ -329,11 +528,15 @@ export class PlaybackEngine {
 
     /**
      * 切换音轨
-     * @param {number} id 音轨 id（hls.js 为 trackId，原生为索引）
+     * @param {number} id 音轨 id
      */
     setAudioTrack(id) {
-        if (this.hls) { this.hls.audioTrack = id; return; }
-        // 原生：AudioTrackList 同一时刻只能一条 enabled
+        if (this.shaka) {
+            const track = this.getAudioTracks()[id];
+            if (!track) return;
+            this.shaka.selectAudioLanguage(track.lang, track.role || '');
+            return;
+        }
         const native = this.video.audioTracks;
         if (native && native.length > 1) {
             for (let i = 0; i < native.length; i++) {
@@ -349,11 +552,13 @@ export class PlaybackEngine {
     async detach() {
         this._destroyed = true;
         clearTimeout(this._retryTimer);
+        clearTimeout(this._readyFallbackTimer);
+        this._readyEmitted = false;
         this._netRetries = 0;
         this._mediaRetries = 0;
-        if (this.hls) {
-            try { this.hls.destroy(); } catch { /* 忽略销毁异常 */ }
-            this.hls = null;
+        if (this.shaka) {
+            try { await this.shaka.destroy(); } catch { /* 忽略销毁异常 */ }
+            this.shaka = null;
         }
         if (this.video) {
             this.video.removeEventListener('error', this._onNativeError);
@@ -363,5 +568,6 @@ export class PlaybackEngine {
             } catch { /* 忽略 */ }
         }
         this.native = false;
+        this._abrEnabled = true;
     }
 }

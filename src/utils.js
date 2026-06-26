@@ -85,9 +85,17 @@ export function nativeHlsSupported() {
         video.canPlayType('application/x-mpegURL') !== '';
 }
 
-/** 是否支持画中画 */
-export const supportsPiP = 'pictureInPictureEnabled' in document &&
-    document.pictureInPictureEnabled;
+/** 是否支持画中画（标准 API 或 iOS webkit presentation mode） */
+export function videoSupportsPiP(video = document.createElement('video')) {
+    if (typeof document !== 'undefined' && document.pictureInPictureEnabled
+        && typeof video.requestPictureInPicture === 'function') {
+        return true;
+    }
+    return typeof video.webkitSupportsPresentationMode === 'function'
+        && video.webkitSupportsPresentationMode('picture-in-picture');
+}
+
+export const supportsPiP = typeof document !== 'undefined' && videoSupportsPiP();
 
 /** 是否支持全屏 API */
 /* iPhone Safari 不支持 document/element 级全屏（fullscreenEnabled 为 false），
@@ -101,4 +109,42 @@ export const supportsFullscreen = !!(document.fullscreenEnabled ||
 /** 是否支持 AirPlay（Safari） */
 export function supportsAirPlay() {
     return !!window.WebKitPlaybackTargetAvailabilityEvent;
+}
+
+/** 移动端精简控件布局（底部 dock 仅保留核心按钮） */
+export function isCompactControlsViewport() {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(max-width: 640px)').matches;
+}
+
+/** 是否触屏设备（移动端控件靠点击切换，不做秒级自动隐藏） */
+export function hasTouchInput() {
+    return typeof window !== 'undefined' && (
+        'ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0
+    );
+}
+
+/** @deprecated 优先使用 hasTouchInput() 运行时检测 */
+export const isTouchDevice = hasTouchInput();
+
+/**
+ * 当前播放位置之后已缓冲的秒数（用于起播前等待预缓冲）
+ * @param {HTMLVideoElement} video
+ * @returns {number}
+ */
+export function bufferedAheadSeconds(video) {
+    if (!video?.buffered?.length) return 0;
+    const t = video.currentTime;
+    for (let i = 0; i < video.buffered.length; i++) {
+        if (t >= video.buffered.start(i) && t <= video.buffered.end(i)) {
+            return Math.max(0, video.buffered.end(i) - t);
+        }
+    }
+    // 播放点落在空洞中时，取第一个在其之后的缓冲区间
+    for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) > t) {
+            return Math.max(0, video.buffered.end(i) - t);
+        }
+    }
+    return 0;
 }
